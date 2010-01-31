@@ -149,7 +149,7 @@ def random_walker(data, labels, beta=130, mode='bf'):
         X = np.array([solver(np.array((-B[i,:]).todense()).ravel())\
                 for i in range(B.shape[0])])
         X= np.argmax(X, axis=0) + 1
-        return clean_labels_ar(X, labels)
+        return (clean_labels_ar(X, labels)).reshape(data.shape)
     elif mode=='amg':
         print "converting"
         lap_sparse = lap_sparse.tocsr()
@@ -172,7 +172,7 @@ def random_walker(data, labels, beta=130, mode='bf'):
             del mask
         ll = clean_labels_ar(ll + 1, labels)
         data = np.squeeze(data)
-        return ll
+        return ll.reshape(data.shape)
 
 
 
