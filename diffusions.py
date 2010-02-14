@@ -1,7 +1,11 @@
 import numpy as np
 import scipy, scipy.linalg
 from scipy.sparse import coo_matrix, lil_matrix
-from pyamg import smoothed_aggregation_solver
+try:
+    from pyamg import smoothed_aggregation_solver
+    amg_loaded = True
+except ImportError:
+    amg_loaded = False 
 from scipy import sparse
 import scipy.sparse.linalg.eigen.arpack
 
@@ -68,7 +72,7 @@ def make_weights_3d(edges, data, beta=130, eps=1.e-6):
                             data[edges[1]/(ly*lz),\
                                  (edges[1]%(ly*lz))/lz,\
                                  (edges[1]%(ly*lz))%lz])**2 
-    weights = np.exp(-beta*gradients/gradients.max()) + eps
+    weights = np.exp(-beta*gradients/(10*data.std())) + eps
     return weights
 
 def make_laplacian_sparse(edges, weights):
@@ -133,15 +137,73 @@ def buildAB(lap_sparse, labels):
     
 def random_walker(data, labels, beta=130, mode='bf'):
     """
-        Segmentation with random walker algorithm, given some data and an array of
-        labels (the more labels, the less unknowns and the faster the resolution)
-        Brute force of multi-grid
+        Segmentation with random walker algorithm by Leo Grady, 
+        given some data and an array of labels (the more labeled 
+        pixels, the less unknowns and the faster the resolution)
+
+        Parameters
+        ----------
+
+        data : array_like
+            Image to be segmented in regions. `data` can be two- or
+            three-dimensional.
+
+        labels : array of ints
+            Array of seed markers labeled with different integers
+            for different phases. Negative labels correspond to inactive
+            pixels that do not diffuse (they are removed from the graph).
+
+        beta : float
+            Penalization coefficient for the random walker motion
+            (the greater `beta`, the more difficult the diffusion).
+
+        mode : {'bf', 'amg'}
+            Mode for solving the linear system in the random walker 
+            algorithm. `mode` can be either 'bf' (for brute force),
+            in which case matrices are directly inverted, or 'amg'
+            (for algebraic multigrid solver), in which case a multigrid
+            approach is used. The 'amg' mode uses the pyamg module 
+            (http://code.google.com/p/pyamg/), which must be installed
+            to use this mode.
+
+        Returns
+        -------
+
+        output : ndarray of ints
+            Array in which each pixel has been attributed the label number
+            that reached the pixel first by diffusion.
+
+        Notes
+        -----
+
+        The algorithm was first proposed in *Random walks for image 
+        segmentation*, Leo Grady, IEEE Trans Pattern Anal Mach Intell. 
+        2006 Nov;28(11):1768-83.
+
+        Examples
+        --------
+
+        >>> a = np.zeros((10, 10)) + 0.2*np.random.random((10, 10))
+        >>> a[5:8, 5:8] += 1
+        >>> b = np.zeros_like(a)
+        >>> b[3,3] = 1 #Marker for first phase
+        >>> b[6,6] = 2 #Marker for second phase
+        >>> random_walker(a, b)
+        array([[ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  2.,  2.,  2.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  2.,  2.,  2.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  2.,  2.,  2.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.],
+               [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.]])
+
     """
     data = np.atleast_3d(data)
     labels = np.atleast_3d(labels)
-    print "make lap"
     lap_sparse = build_laplacian(data, beta=beta)
-    print "make A, B"
     lap_sparse, B = buildAB(lap_sparse, labels)
     if mode=='bf':
         lap_sparse = lap_sparse.tocsc()
@@ -149,16 +211,17 @@ def random_walker(data, labels, beta=130, mode='bf'):
         X = np.array([solver(np.array((-B[i,:]).todense()).ravel())\
                 for i in range(B.shape[0])])
         X= np.argmax(X, axis=0) + 1
+        data = np.squeeze(data)
         return (clean_labels_ar(X, labels)).reshape(data.shape)
     elif mode=='amg':
-        print "converting"
+        if not amg_loaded:
+            print """the pyamg module (http://code.google.com/p/pyamg/)
+            must be installed to use the amg mode"""
+            raise ImportError
         lap_sparse = lap_sparse.tocsr()
-        print "making mls"
         le = lap_sparse.shape[0]
-        print le
         mls = smoothed_aggregation_solver(lap_sparse)
         del lap_sparse
-        print "mls ok"
         ll = np.memmap('/tmp/labels', dtype=np.int32, mode='w+', shape=(le,))
         ll[:]=0
         proba_max = np.memmap('/tmp/proba', dtype=np.float32, mode='w+', shape=(le,))
@@ -242,6 +305,10 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         X = np.array([solver(gamma*label_prior)\
                 for label_prior in prior])
     elif mode=='amg':
+        if not amg_loaded:
+            print """the pyamg module (http://code.google.com/p/pyamg/)
+            must be installed to use the amg mode"""
+            raise ImportError
         print "converting"
         lap_sparse = lap_sparse.tocsr()
         print "making mls"
