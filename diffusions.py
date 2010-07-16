@@ -7,7 +7,71 @@ try:
 except ImportError:
     amg_loaded = False 
 from scipy import sparse
+from scipy import ndimage
 import scipy.sparse.linalg.eigen.arpack
+
+def myin1d(ar1, ar2, assume_unique=False):
+    if not assume_unique:
+        ar1, rev_idx = unique(ar1, return_inverse=True)
+        ar2 = np.unique(ar2)
+    ar = np.concatenate( (ar1, ar2) )
+    # We need this to be a stable sort, so always use 'mergesort'
+    # here. The values from the first array should always come before
+    # the values from the second array.
+    order = ar.argsort(kind='mergesort')
+    sar = ar[order]
+    equal_adj = (sar[1:] == sar[:-1])
+    flag = np.concatenate( (equal_adj, [False] ) )
+    indx = order.argsort(kind='mergesort')[:len( ar1 )]
+
+    if assume_unique:
+        return flag[indx]
+    else:
+        return flag[indx][rev_idx]
+
+def unique(ar, return_index=False, return_inverse=False):
+    try:
+        ar = ar.flatten()
+    except AttributeError:
+        if not return_inverse and not return_index:
+            items = sorted(set(ar))
+            return np.asarray(items)
+        else:
+            ar = np.asanyarray(ar).flatten()
+    
+    if ar.size == 0:
+        if return_inverse and return_index:
+            return ar, np.empty(0, np.bool), np.empty(0, np.bool)
+        elif return_inverse or return_index:
+            return ar, np.empty(0, np.bool)
+        else: 
+            return ar
+        
+    if return_inverse or return_index:
+        perm = ar.argsort()
+        aux = ar[perm]
+        flag = np.concatenate(([True], aux[1:] != aux[:-1]))
+        if return_inverse:
+            iflag = np.cumsum(flag) - 1
+            iperm = perm.argsort()
+            if return_index:
+                return aux[flag], perm[flag], iflag[iperm]
+            else:
+                return aux[flag], iflag[iperm]
+        else:
+            return aux[flag], perm[flag]
+
+    else:
+        ar.sort()
+        flag = np.concatenate(([True], ar[1:] != ar[:-1]))
+        return ar[flag]
+
+
+if np.__version__ >= '1.4':
+    from numpy import in1d
+else:
+    in1d = myin1d
+
 
 #--------- Synthetic data ---------------
 
@@ -121,9 +185,12 @@ def clean_labels_ar(X, labels):
 def buildAB(lap_sparse, labels):
     lx, ly, lz = labels.shape
     labels = labels.ravel()
-    total_ind = np.arange(lx*ly*lz)
+    labels = labels[labels>=0]
+    total_ind = np.arange(labels.size) #np.arange((labels>=0).sum())
     unmarked = total_ind[labels == 0]
+    #inactive = total_ind[labels<0]
     seeds_indices = np.setdiff1d(total_ind, unmarked)
+    #seeds_indices = np.setdiff1d(seeds_indices, inactive)
     print "making"
     B = lap_sparse[unmarked][:, seeds_indices]
     lap_sparse = lap_sparse[unmarked][:, unmarked]
@@ -202,8 +269,18 @@ def random_walker(data, labels, beta=130, mode='bf'):
 
     """
     data = np.atleast_3d(data)
+    if np.any(labels<0):
+        filled = ndimage.binary_propagation(labels>0, mask=labels>=0)
+        labels[np.logical_and(np.logical_not(filled), labels==0)] = -1
+        del filled
+        marked = ndimage.binary_opening(labels>=0)
+        mask = labels>=0
+        labels[np.logical_and(mask>=0, np.logical_not(marked))] = -1
     labels = np.atleast_3d(labels)
-    lap_sparse = build_laplacian(data, beta=beta)
+    if np.any(labels<0):
+        lap_sparse = build_laplacian(data, mask=labels>=0, beta=beta)
+    else:
+        lap_sparse = build_laplacian(data, beta=beta)
     lap_sparse, B = buildAB(lap_sparse, labels)
     if mode=='bf':
         lap_sparse = lap_sparse.tocsc()
@@ -242,8 +319,8 @@ def random_walker(data, labels, beta=130, mode='bf'):
 def trim_edges_weights(edges, weights, mask):
     inds = np.arange(mask.size)
     inds = inds[mask.ravel()]
-    ind_mask = np.logical_and(np.in1d(edges[0], inds),
-                          np.in1d(edges[1], inds))
+    ind_mask = np.logical_and(in1d(edges[0], inds),
+                          in1d(edges[1], inds))
     edges, weights = edges[:, ind_mask], weights[ind_mask]
     maxval = edges.max()
     order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
@@ -289,6 +366,60 @@ def fiedler_vector(data, mask, mode='bf'):
 
 
 def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
+    """
+        Parameters
+        ----------
+
+        data : array_like
+            Image to be segmented in regions. `data` can be two- or
+            three-dimensional.
+
+
+        prior : array_like
+            Array of 1-dimensional probabilities that the pixels 
+            belong to the different phases. The size of `prior` is n x s
+            where n is the number of phases to be segmented, and s the 
+            total number of pixels.
+
+        mode : {'bf', 'amg'}
+            Mode for solving the linear system in the random walker 
+            algorithm. `mode` can be either 'bf' (for brute force),
+            in which case matrices are directly inverted, or 'amg'
+            (for algebraic multigrid solver), in which case a multigrid
+            approach is used. The 'amg' mode uses the pyamg module 
+            (http://code.google.com/p/pyamg/), which must be installed
+            to use this mode.
+
+        gamma : float
+            gamma determines the absence of confidence into the prior. 
+            The smaller gamma, the more the output values will be determined
+            according to the prior only. Conversely, the greater gamma, 
+            the more continuous the segmented regions will be.
+
+        Returns
+        -------
+
+        output : ndarray of ints
+            Segmentation of data. The number of phases corresponds to the
+            number of lines in prior.
+
+        Notes
+        -----
+
+        The algorithm was first proposed in *Multilabel random walker 
+        image segmentation using prior models*, L. Grady, IEEE CVPR 2005,
+        p. 770 (2005).
+
+        Examples
+        --------
+        >>> a = np.zeros((40, 40))
+        >>> a[10:-10, 10:-10] = 1
+        >>> a += 0.7*np.random.random((40, 40))
+        >>> p = a.max() - a.ravel()
+        >>> q = a.ravel()
+        >>> prior = np.array([p, q])
+        >>> labs = random_walker_prior(a, prior)
+    """
     k = prior.shape[1]
     data = np.atleast_3d(data)
     print "building lap"
@@ -318,7 +449,7 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         X = np.array([mls.solve(gamma*label_prior)\
                 for label_prior in prior])
         del mls
-    return np.argmax(X, axis=0)
+    return np.squeeze((np.argmax(X, axis=0)).reshape(data.shape))
 
 
 
@@ -329,8 +460,32 @@ def test_2d():
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
     labels = random_walker(data, labels, beta=90)
-    #assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
+    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
     return data, labels
+
+
+def test_2d_inactive():
+    lx = 70
+    ly = 100
+    data, labels = make_2d_syntheticdata(lx, ly)
+    labels[10:20, 10:20] = -1
+    labels[46:50, 33:38] = -2
+    labels = random_walker(data, labels, beta=90)
+    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
+    return data, labels
+
+def test_2d_inactive2():
+    lx = 70
+    ly = 100
+    data, labels = make_2d_syntheticdata(lx, ly)
+    labels[10:20, 10:20] = -1
+    labels[15, 15] = 0
+    labels[10, 10] = 0
+    labels[11, 11] = 1
+    labels = random_walker(data, labels, beta=90)
+    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
+    return data, labels
+
 
 def test_3d():    
     n=30
@@ -339,4 +494,15 @@ def test_3d():
     labels = random_walker(data, labels)
     assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
     return data, labels
+
+def test_3d_inactive():
+    n=30
+    lx, ly, lz = n, n, n
+    data, labels = make_3d_syntheticdata(lx, ly, lz)
+    old_labels = np.copy(labels)
+    labels[5:25, 26:29, 26:29] = -1
+    after_labels = np.copy(labels)
+    labels = random_walker(data, labels)
+    assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
+    return data, labels, old_labels, after_labels
 
