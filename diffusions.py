@@ -67,6 +67,12 @@ def unique(ar, return_index=False, return_inverse=False):
         return ar[flag]
 
 
+def test_myin1d():
+    a = np.arange(10)
+    b = a[a%2 == 0]
+    assert myin1d(a, b).sum() == 5
+
+
 if np.__version__ >= '1.4':
     from numpy import in1d
 else:
@@ -115,7 +121,7 @@ def make_3d_syntheticdata(lx, ly=None, lz=None):
 
 #-----------Laplacian--------------------
 
-def make_edges_3d(lx, ly=None, lz=None):
+def _make_edges_3d(lx, ly=None, lz=None):
     if ly == None:
         ly = lx
     if lz == None:
@@ -128,7 +134,7 @@ def make_edges_3d(lx, ly=None, lz=None):
     edges = np.hstack((edges_deep, edges_right, edges_down))
     return edges
 
-def make_weights_3d(edges, data, beta=130, eps=1.e-6):
+def _make_weights_3d(edges, data, beta=130, eps=1.e-6):
     lx, ly, lz = data.shape
     gradients = (data[edges[0]/(ly*lz),\
                                  (edges[0]%(ly*lz))/lz,\
@@ -139,7 +145,7 @@ def make_weights_3d(edges, data, beta=130, eps=1.e-6):
     weights = np.exp(-beta*gradients/(10*data.std())) + eps
     return weights
 
-def make_laplacian_sparse(edges, weights):
+def _make_laplacian_sparse(edges, weights):
     """
     Sparse implementation
     """
@@ -155,7 +161,7 @@ def make_laplacian_sparse(edges, weights):
              np.hstack((j_indices, diag)))), shape=(pixel_nb, pixel_nb))
     return lap.tocsc()
 
-def make_normed_laplacian(edges, weights):
+def _make_normed_laplacian(edges, weights):
     """
     Sparse implementation
     """
@@ -177,12 +183,12 @@ def make_normed_laplacian(edges, weights):
             shape=(pixel_nb, pixel_nb))
     return lap.tocsc(), w
 
-def clean_labels_ar(X, labels):
+def _clean_labels_ar(X, labels):
     labels = np.ravel(labels)
     labels[labels==0] = X
     return labels
 
-def buildAB(lap_sparse, labels):
+def _buildAB(lap_sparse, labels):
     lx, ly, lz = labels.shape
     labels = labels.ravel()
     labels = labels[labels>=0]
@@ -278,10 +284,10 @@ def random_walker(data, labels, beta=130, mode='bf'):
         labels[np.logical_and(mask>=0, np.logical_not(marked))] = -1
     labels = np.atleast_3d(labels)
     if np.any(labels<0):
-        lap_sparse = build_laplacian(data, mask=labels>=0, beta=beta)
+        lap_sparse = _build_laplacian(data, mask=labels>=0, beta=beta)
     else:
-        lap_sparse = build_laplacian(data, beta=beta)
-    lap_sparse, B = buildAB(lap_sparse, labels)
+        lap_sparse = _build_laplacian(data, beta=beta)
+    lap_sparse, B = _buildAB(lap_sparse, labels)
     if mode=='bf':
         lap_sparse = lap_sparse.tocsc()
         solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
@@ -289,7 +295,7 @@ def random_walker(data, labels, beta=130, mode='bf'):
                 for i in range(B.shape[0])])
         X= np.argmax(X, axis=0) + 1
         data = np.squeeze(data)
-        return (clean_labels_ar(X, labels)).reshape(data.shape)
+        return (_clean_labels_ar(X, labels)).reshape(data.shape)
     elif mode=='amg':
         if not amg_loaded:
             print """the pyamg module (http://code.google.com/p/pyamg/)
@@ -310,13 +316,13 @@ def random_walker(data, labels, beta=130, mode='bf'):
             ll[mask] = i
             proba_max[mask] = (x[mask]).astype(np.float32)
             del mask
-        ll = clean_labels_ar(ll + 1, labels)
+        ll = _clean_labels_ar(ll + 1, labels)
         data = np.squeeze(data)
         return ll.reshape(data.shape)
 
 
 
-def trim_edges_weights(edges, weights, mask):
+def _trim_edges_weights(edges, weights, mask):
     inds = np.arange(mask.size)
     inds = inds[mask.ravel()]
     ind_mask = np.logical_and(in1d(edges[0], inds),
@@ -328,23 +334,23 @@ def trim_edges_weights(edges, weights, mask):
     return edges, weights
 
 
-def build_laplacian(data, mask=None, normed=False, beta=50):
+def _build_laplacian(data, mask=None, normed=False, beta=50):
     lx, ly, lz = data.shape
-    edges = make_edges_3d(lx, ly, lz)
-    weights = make_weights_3d(edges, data, beta=beta, eps=1.e-10)
+    edges = _make_edges_3d(lx, ly, lz)
+    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
     if mask is not None:
-        edges, weights = trim_edges_weights(edges, weights, mask)
+        edges, weights = _trim_edges_weights(edges, weights, mask)
     if not normed:
-        lap =  make_laplacian_sparse(edges, weights)
+        lap =  _make_laplacian_sparse(edges, weights)
         del edges, weights
         return lap
     else:
-        lap, w = make_normed_laplacian(edges, weights)
+        lap, w = _make_normed_laplacian(edges, weights)
         del edges, weights
         return lap, w
 
 def fiedler_vector(data, mask, mode='bf'):
-    lap, w = build_laplacian(np.atleast_3d(data), 
+    lap, w = _build_laplacian(np.atleast_3d(data), 
                 np.atleast_3d(mask), normed=True)
     if mode == 'bf':
         vv = scipy.sparse.linalg.eigen.arpack.eigen_symmetric(lap, which='LA', k=5)
@@ -423,7 +429,7 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
     k = prior.shape[1]
     data = np.atleast_3d(data)
     print "building lap"
-    lap_sparse = build_laplacian(data)
+    lap_sparse = _build_laplacian(data)
     print "lap ok"
     #lap_sparse = lap_sparse.tolil()
     dia = range(data.size)
