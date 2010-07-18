@@ -9,6 +9,20 @@ except ImportError:
 from scipy import sparse
 from scipy import ndimage
 import scipy.sparse.linalg.eigen.arpack
+from scipy.sparse.linalg.eigen.arpack import eigen_symmetric
+import warnings
+try: 
+    from scipy.sparse.linalg.dsolve import umfpack
+    u = umfpack.UmfpackContext()
+except:
+    warnings.warn("""Scipy was built without UMFPACK. Consider rebuilding 
+    Scipy with UMFPACK, this will accelerate greatly the speed of the random
+    walker functions. You may also install pyamg and run the random walker
+    function in amg mode (see the docstrings)
+    """)
+
+
+
 
 def myin1d(ar1, ar2, assume_unique=False):
     if not assume_unique:
@@ -208,6 +222,37 @@ def _buildAB(lap_sparse, labels):
         Bi[lab-1, :] = (B.tocsr()* fs)
     return lap_sparse, Bi
     
+def _trim_edges_weights(edges, weights, mask):
+    inds = np.arange(mask.size)
+    inds = inds[mask.ravel()]
+    ind_mask = np.logical_and(in1d(edges[0], inds),
+                          in1d(edges[1], inds))
+    edges, weights = edges[:, ind_mask], weights[ind_mask]
+    maxval = edges.max()
+    order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
+    edges = order[edges]
+    return edges, weights
+
+
+def _build_laplacian(data, mask=None, normed=False, beta=50):
+    lx, ly, lz = data.shape
+    edges = _make_edges_3d(lx, ly, lz)
+    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
+    if mask is not None:
+        edges, weights = _trim_edges_weights(edges, weights, mask)
+    if not normed:
+        lap =  _make_laplacian_sparse(edges, weights)
+        del edges, weights
+        return lap
+    else:
+        lap, w = _make_normed_laplacian(edges, weights)
+        del edges, weights
+        return lap, w
+
+
+
+#----------- Random walker algorithms (with markers or with prior) -------------
+
 def random_walker(data, labels, beta=130, mode='bf'):
     """
         Segmentation with random walker algorithm by Leo Grady, 
@@ -274,7 +319,10 @@ def random_walker(data, labels, beta=130, mode='bf'):
                [ 1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.,  1.]])
 
     """
+    # We work with 3-D arrays
     data = np.atleast_3d(data)
+    # If the array has pruned zones, be sure that no isolated pixels
+    # exist between pruned zones (they could not be determined)
     if np.any(labels<0):
         filled = ndimage.binary_propagation(labels>0, mask=labels>=0)
         labels[np.logical_and(np.logical_not(filled), labels==0)] = -1
@@ -288,6 +336,10 @@ def random_walker(data, labels, beta=130, mode='bf'):
     else:
         lap_sparse = _build_laplacian(data, beta=beta)
     lap_sparse, B = _buildAB(lap_sparse, labels)
+    # We solve the linear system
+    # lap_sparse X = B
+    # where X[i, j] is the probability that a marker of label i arrives 
+    # first at pixel j by diffusion
     if mode=='bf':
         lap_sparse = lap_sparse.tocsc()
         solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
@@ -305,10 +357,8 @@ def random_walker(data, labels, beta=130, mode='bf'):
         le = lap_sparse.shape[0]
         mls = smoothed_aggregation_solver(lap_sparse)
         del lap_sparse
-        ll = np.memmap('/tmp/labels', dtype=np.int32, mode='w+', shape=(le,))
-        ll[:]=0
-        proba_max = np.memmap('/tmp/proba', dtype=np.float32, mode='w+', shape=(le,))
-        proba_max[:]=0
+        ll = np.zeros(le, dtype=np.int32)
+        proba_max = np.zeros(le, dtype=np.float32)
         for i in range(B.shape[0]):
             print i
             x = mls.solve(np.ravel(-B[i,:].todense()).astype(np.float32))
@@ -316,57 +366,11 @@ def random_walker(data, labels, beta=130, mode='bf'):
             ll[mask] = i
             proba_max[mask] = (x[mask]).astype(np.float32)
             del mask
+        del proba_max
         ll = _clean_labels_ar(ll + 1, labels)
         data = np.squeeze(data)
         return ll.reshape(data.shape)
 
-
-
-def _trim_edges_weights(edges, weights, mask):
-    inds = np.arange(mask.size)
-    inds = inds[mask.ravel()]
-    ind_mask = np.logical_and(in1d(edges[0], inds),
-                          in1d(edges[1], inds))
-    edges, weights = edges[:, ind_mask], weights[ind_mask]
-    maxval = edges.max()
-    order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
-    edges = order[edges]
-    return edges, weights
-
-
-def _build_laplacian(data, mask=None, normed=False, beta=50):
-    lx, ly, lz = data.shape
-    edges = _make_edges_3d(lx, ly, lz)
-    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
-    if mask is not None:
-        edges, weights = _trim_edges_weights(edges, weights, mask)
-    if not normed:
-        lap =  _make_laplacian_sparse(edges, weights)
-        del edges, weights
-        return lap
-    else:
-        lap, w = _make_normed_laplacian(edges, weights)
-        del edges, weights
-        return lap, w
-
-def fiedler_vector(data, mask, mode='bf'):
-    lap, w = _build_laplacian(np.atleast_3d(data), 
-                np.atleast_3d(mask), normed=True)
-    if mode == 'bf':
-        vv = scipy.sparse.linalg.eigen.arpack.eigen_symmetric(lap, which='LA', k=5)
-        print vv[0]
-        values = 1./np.sqrt(w)*vv[1][:,-2]
-    if mode == 'amg':
-        ml = smoothed_aggregation_solver(lap.tocsr())
-        X = scipy.rand(lap.shape[0], 4)
-        X[:,0] = 1./np.sqrt(lap.shape[0])
-        M = ml.aspreconditioner()
-        W,V = scipy.sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
-        print W
-        values = V[:,-2]
-    result = np.zeros_like(data).astype(np.float)
-    result[mask] = values
-    return result
 
 
 
@@ -431,7 +435,6 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
     print "building lap"
     lap_sparse = _build_laplacian(data)
     print "lap ok"
-    #lap_sparse = lap_sparse.tolil()
     dia = range(data.size)
     lap_sparse = lap_sparse +scipy.sparse.lil_diags([gamma*prior.sum(axis=0)],[0],\
         lap_sparse.shape)
@@ -457,6 +460,36 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         del mls
     return np.squeeze((np.argmax(X, axis=0)).reshape(data.shape))
 
+def fiedler_vector(data, mask, mode='bf'):
+    """
+    >>> x, y = np.indices((40, 40))
+    >>> x1, y1, x2, y2 = 14, 14, 28, 26
+    >>> r1, r2 = 11, 10
+    >>> mask_circle1 = (x - x1)**2 + (y - y1)**2 < r1**2
+    >>> mask_circle2 = (x - x2)**2 + (y - y2)**2 < r2**2
+    >>> image = np.logical_or(mask_circle1, mask_circle2)
+    >>> v = fiedler_vector(image, image)
+    """
+    lap, w = _build_laplacian(np.atleast_3d(data), 
+                np.atleast_3d(mask), normed=True)
+    if mode == 'bf':
+        #vv = scipy.sparse.linalg.eigen.arpack.eigen_symmetric(lap, which='LA', k=5)
+        vv = eigen_symmetric(lap, which='LA', k=5)
+        print vv[0]
+        values = 1./np.sqrt(w)*vv[1][:,-2]
+    if mode == 'amg':
+        ml = smoothed_aggregation_solver(lap.tocsr())
+        X = scipy.rand(lap.shape[0], 4)
+        X[:,0] = 1./np.sqrt(lap.shape[0])
+        M = ml.aspreconditioner()
+        W,V = scipy.sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
+        print W
+        values = V[:,-2]
+    result = np.zeros_like(data).astype(np.float)
+    result[mask] = values
+    return result
+
+
 
 
 #----------- Tests --------------------------------
@@ -465,9 +498,13 @@ def test_2d():
     lx = 70
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
-    labels = random_walker(data, labels, beta=90)
-    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    return data, labels
+    labels_bf = random_walker(data, labels, beta=90)
+    data, labels = make_2d_syntheticdata(lx, ly)
+    assert (labels_bf.reshape((lx, ly))[25:45, 40:60] == 2).all()
+    if amg_loaded:
+        labels_amg = random_walker(data, labels, beta=90, mode='amg')
+        assert (labels_amg.reshape((lx, ly))[25:45, 40:60] == 2).all()
+    return data, labels_bf, labels_amg
 
 
 def test_2d_inactive():
@@ -512,3 +549,30 @@ def test_3d_inactive():
     assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
     return data, labels, old_labels, after_labels
 
+def test_fiedler():
+    x, y = np.indices((40, 40))
+    x1, y1, x2, y2 = 14, 14, 28, 26
+    r1, r2 = 10, 10
+    mask_circle1 = (x - x1)**2 + (y - y1)**2 < r1**2
+    mask_circle2 = (x - x2)**2 + (y - y2)**2 < r2**2
+    image = np.logical_or(mask_circle1, mask_circle2)
+    v = fiedler_vector(image, image)
+    vm = v[image]
+    # Test that the image is separated in two regions
+    # that have almost the same area
+    assert np.abs((vm>0).sum() - (vm<0).sum()) <= 2
+    return image, v
+
+def test_rw_with_prior():
+    a = np.zeros((40, 40))
+    a[10:-10, 10:-10] = 1
+    a += 0.7*np.random.random((40, 40))
+    p = a.max() - a.ravel()
+    q = a.ravel()
+    prior = np.array([p, q])
+    labs = random_walker_prior(a, prior)
+    assert (labs[11:-11, 11:-11] == 1).all()
+    if amg_loaded:
+        labs_amg = random_walker_prior(a, prior, mode='amg')
+        assert (labs_amg[11:-11, 11:-11] == 1).all()
+ 
