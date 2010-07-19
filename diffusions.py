@@ -1,3 +1,13 @@
+"""
+diffusions: a module providing segmentation algorithm based on diffusion.
+
+The algorithms of this module are based on the "random walker" algorithm.
+"""
+
+# Author: Emmanuelle Gouillart <emmanuelle.gouillart@normalesup.org>
+# Copyright (c) 2009-2010, Emmanuelle Gouillart
+# License: BSD
+
 import numpy as np
 import scipy, scipy.linalg
 from scipy.sparse import coo_matrix, lil_matrix
@@ -99,14 +109,15 @@ def make_2d_syntheticdata(lx, ly=None):
     if ly == None:
         ly = lx
     data = np.zeros((lx, ly)) + 0.1*np.random.randn(lx, ly)
-    small_l = int(lx/5)
-    data[lx/2-small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l]=1
-    data[lx/2-small_l+1:lx/2+small_l-1,\
-        ly/2-small_l+1:ly/2+small_l-1]=0.1*np.random.randn(2*small_l-2, 2*small_l-2)
-    data[lx/2-small_l, ly/2-small_l/8:ly/2+small_l/8]=0
+    small_l = int(lx / 5)
+    data[lx/2 - small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l]=1
+    data[lx/2 - small_l+1:lx/2+small_l-1, \
+        ly/2-small_l+1:ly/2+small_l-1] = \
+        0.1 * np.random.randn(2*small_l-2, 2*small_l-2)
+    data[lx/2-small_l, ly/2-small_l/8:ly/2+small_l/8] = 0
     seeds = np.zeros_like(data)
     seeds[lx/5, ly/5] = 1
-    seeds[lx/2+small_l/4, ly/2-small_l/4] = 2
+    seeds[lx/2 + small_l/4, ly/2 - small_l/4] = 2
     return data, seeds
 
 def make_3d_syntheticdata(lx, ly=None, lz=None):
@@ -141,22 +152,22 @@ def _make_edges_3d(lx, ly=None, lz=None):
     if lz == None:
         lz = lx
     vertices = np.arange(lx*ly*lz).reshape((lx, ly, lz))
-    edges_deep = np.vstack((vertices[:,:,:-1].ravel(),\
-        vertices[:,:,1:].ravel()))
-    edges_right = np.vstack((vertices[:,:-1].ravel(), vertices[:,1:].ravel()))
+    edges_deep = np.vstack((vertices[:, :, :-1].ravel(),\
+        vertices[:, :, 1:].ravel()))
+    edges_right = np.vstack((vertices[:, :-1].ravel(), vertices[:, 1:].ravel()))
     edges_down = np.vstack((vertices[:-1].ravel(), vertices[1:].ravel()))
     edges = np.hstack((edges_deep, edges_right, edges_down))
     return edges
 
 def _make_weights_3d(edges, data, beta=130, eps=1.e-6):
     lx, ly, lz = data.shape
-    gradients = (data[edges[0]/(ly*lz),\
-                                 (edges[0]%(ly*lz))/lz,\
-                                 (edges[0]%(ly*lz))%lz] -\
-                            data[edges[1]/(ly*lz),\
-                                 (edges[1]%(ly*lz))/lz,\
-                                 (edges[1]%(ly*lz))%lz])**2 
-    weights = np.exp(-beta*gradients/(10*data.std())) + eps
+    gradients = (data[edges[0]/(ly*lz), \
+                                 (edges[0] % (ly*lz))/lz, \
+                                 (edges[0] % (ly*lz))%lz] - \
+                            data[edges[1]/(ly*lz), \
+                                 (edges[1] % (ly*lz))/lz, \
+                                 (edges[1] % (ly*lz)) % lz])**2 
+    weights = np.exp(- beta*gradients / (10*data.std())) + eps
     return weights
 
 def _make_laplacian_sparse(edges, weights):
@@ -169,9 +180,9 @@ def _make_laplacian_sparse(edges, weights):
     j_indices = np.hstack((edges[1], edges[0]))
     data = np.hstack((-weights, -weights))
     lap = coo_matrix((data, (i_indices, j_indices)), shape=(pixel_nb, pixel_nb))
-    connect = -np.ravel(lap.sum(axis=1)) 
-    lap = coo_matrix((np.hstack((data, connect)),\
-            (np.hstack((i_indices,diag)),\
+    connect = - np.ravel(lap.sum(axis=1)) 
+    lap = coo_matrix((np.hstack((data, connect)), \
+            (np.hstack((i_indices,diag)), \
              np.hstack((j_indices, diag)))), shape=(pixel_nb, pixel_nb))
     return lap.tocsc()
 
@@ -188,8 +199,7 @@ def _make_normed_laplacian(edges, weights):
     data = np.hstack((-weights, -weights))
     lap = coo_matrix((data, (i_indices, j_indices)), shape=(pixel_nb, pixel_nb))
     w = -np.ravel(lap.sum(axis=1))
-    #w[w<tol] = 1
-    data *= 1./(np.sqrt(w[i_indices]*w[j_indices]))
+    data *= 1. / (np.sqrt(w[i_indices]*w[j_indices]))
     data = np.hstack((data, eps*np.ones_like(diag)))
     i_indices = np.hstack((i_indices, diag))
     j_indices = np.hstack((j_indices, diag))
@@ -199,26 +209,24 @@ def _make_normed_laplacian(edges, weights):
 
 def _clean_labels_ar(X, labels):
     labels = np.ravel(labels)
-    labels[labels==0] = X
+    labels[labels == 0] = X
     return labels
 
 def _buildAB(lap_sparse, labels):
     lx, ly, lz = labels.shape
     labels = labels.ravel()
-    labels = labels[labels>=0]
-    total_ind = np.arange(labels.size) #np.arange((labels>=0).sum())
+    labels = labels[labels >= 0]
+    total_ind = np.arange(labels.size) 
     unmarked = total_ind[labels == 0]
-    #inactive = total_ind[labels<0]
     seeds_indices = np.setdiff1d(total_ind, unmarked)
-    #seeds_indices = np.setdiff1d(seeds_indices, inactive)
-    print "making"
     B = lap_sparse[unmarked][:, seeds_indices]
     lap_sparse = lap_sparse[unmarked][:, unmarked]
     nlabels = labels.max()
-    Bi = scipy.sparse.lil_matrix((nlabels,B.shape[0]))
+    Bi = scipy.sparse.lil_matrix((nlabels, B.shape[0]))
     for lab in range(1, nlabels+1):
         print lab
-        fs = scipy.sparse.csr_matrix((labels[seeds_indices] == lab)[:,np.newaxis])
+        fs = scipy.sparse.csr_matrix((labels[seeds_indices] == lab)\
+                                                [:, np.newaxis])
         Bi[lab-1, :] = (B.tocsr()* fs)
     return lap_sparse, Bi
     
@@ -253,7 +261,7 @@ def _build_laplacian(data, mask=None, normed=False, beta=50):
 
 #----------- Random walker algorithms (with markers or with prior) -------------
 
-def random_walker(data, labels, beta=130, mode='bf'):
+def random_walker(data, labels, beta=130, mode='bf', copy=True):
     """
         Segmentation with random walker algorithm by Leo Grady, 
         given some data and an array of labels (the more labeled 
@@ -283,6 +291,11 @@ def random_walker(data, labels, beta=130, mode='bf'):
             approach is used. The 'amg' mode uses the pyamg module 
             (http://code.google.com/p/pyamg/), which must be installed
             to use this mode.
+
+        copy : bool
+            If copy is False, the `labels` array will be overwritten with
+            the result of the segmentation. Use copy=False if you want to 
+            save on memory.
 
         Returns
         -------
@@ -321,18 +334,21 @@ def random_walker(data, labels, beta=130, mode='bf'):
     """
     # We work with 3-D arrays
     data = np.atleast_3d(data)
+    if copy:
+        labels = np.copy(labels)
+    labels = labels.astype(np.int)
     # If the array has pruned zones, be sure that no isolated pixels
     # exist between pruned zones (they could not be determined)
     if np.any(labels<0):
         filled = ndimage.binary_propagation(labels>0, mask=labels>=0)
-        labels[np.logical_and(np.logical_not(filled), labels==0)] = -1
+        labels[np.logical_and(np.logical_not(filled), labels == 0)] = -1
         del filled
-        marked = ndimage.binary_opening(labels>=0)
-        mask = labels>=0
-        labels[np.logical_and(mask>=0, np.logical_not(marked))] = -1
+        marked = ndimage.binary_opening(labels >= 0)
+        mask = labels >= 0
+        labels[np.logical_and(mask >= 0, np.logical_not(marked))] = -1
     labels = np.atleast_3d(labels)
-    if np.any(labels<0):
-        lap_sparse = _build_laplacian(data, mask=labels>=0, beta=beta)
+    if np.any(labels < 0):
+        lap_sparse = _build_laplacian(data, mask=labels >= 0, beta=beta)
     else:
         lap_sparse = _build_laplacian(data, beta=beta)
     lap_sparse, B = _buildAB(lap_sparse, labels)
@@ -340,15 +356,15 @@ def random_walker(data, labels, beta=130, mode='bf'):
     # lap_sparse X = B
     # where X[i, j] is the probability that a marker of label i arrives 
     # first at pixel j by diffusion
-    if mode=='bf':
+    if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
         solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
-        X = np.array([solver(np.array((-B[i,:]).todense()).ravel())\
+        X = np.array([solver(np.array((-B[i, :]).todense()).ravel())\
                 for i in range(B.shape[0])])
         X= np.argmax(X, axis=0) + 1
         data = np.squeeze(data)
         return (_clean_labels_ar(X, labels)).reshape(data.shape)
-    elif mode=='amg':
+    elif mode == 'amg':
         if not amg_loaded:
             print """the pyamg module (http://code.google.com/p/pyamg/)
             must be installed to use the amg mode"""
@@ -361,8 +377,8 @@ def random_walker(data, labels, beta=130, mode='bf'):
         proba_max = np.zeros(le, dtype=np.float32)
         for i in range(B.shape[0]):
             print i
-            x = mls.solve(np.ravel(-B[i,:].todense()).astype(np.float32))
-            mask = x>proba_max
+            x = mls.solve(np.ravel(-B[i, :].todense()).astype(np.float32))
+            mask = x > proba_max
             ll[mask] = i
             proba_max[mask] = (x[mask]).astype(np.float32)
             del mask
@@ -436,15 +452,15 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
     lap_sparse = _build_laplacian(data)
     print "lap ok"
     dia = range(data.size)
-    lap_sparse = lap_sparse +scipy.sparse.lil_diags([gamma*prior.sum(axis=0)],[0],\
-        lap_sparse.shape)
+    lap_sparse = lap_sparse +scipy.sparse.lil_diags(\
+        [gamma*prior.sum(axis=0)], [0], lap_sparse.shape)
     del dia
-    if mode=='bf':
+    if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
         solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
         X = np.array([solver(gamma*label_prior)\
                 for label_prior in prior])
-    elif mode=='amg':
+    elif mode == 'amg':
         if not amg_loaded:
             print """the pyamg module (http://code.google.com/p/pyamg/)
             must be installed to use the amg mode"""
@@ -462,6 +478,39 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
 
 def fiedler_vector(data, mask, mode='bf'):
     """
+    Compute the second eigenmode of the Laplacian built on data,
+    which separates in two main diffusions basins. Useful to separate
+    an image in two regions.
+
+    Parameters
+    ----------
+    data: ndarray of floats
+        Array containing two objects stuck together that one 
+        wants to separate.
+
+    mask: ndarray of bools
+        Mask defining the region of interest to be separated in
+        two regions.
+
+    mode : {'bf', 'amg'}
+        Mode for computing the eigenmode of the Laplacian. `mode` can 
+        be either 'bf' (for brute force) or 'amg' (for algebraic 
+        multigrid solver), in which case a multigrid approach is used. 
+        The 'amg' mode uses the pyamg module 
+        (http://code.google.com/p/pyamg/), which must be installed
+        to use this mode.
+
+    Note
+    ----
+    The algorithm does not work well if more than two objects are
+    stuck together, or if mask has more than one connex component.
+
+    References
+    ----------
+    www.stat.cmu.edu/~cshalizi/350/lectures/15/lecture-15.pdf
+
+    Examples
+    --------
     >>> x, y = np.indices((40, 40))
     >>> x1, y1, x2, y2 = 14, 14, 28, 26
     >>> r1, r2 = 11, 10
@@ -476,15 +525,15 @@ def fiedler_vector(data, mask, mode='bf'):
         #vv = scipy.sparse.linalg.eigen.arpack.eigen_symmetric(lap, which='LA', k=5)
         vv = eigen_symmetric(lap, which='LA', k=5)
         print vv[0]
-        values = 1./np.sqrt(w)*vv[1][:,-2]
+        values = 1. / np.sqrt(w) * vv[1][:, -2]
     if mode == 'amg':
         ml = smoothed_aggregation_solver(lap.tocsr())
         X = scipy.rand(lap.shape[0], 4)
-        X[:,0] = 1./np.sqrt(lap.shape[0])
+        X[:, 0] = 1. / np.sqrt(lap.shape[0])
         M = ml.aspreconditioner()
-        W,V = scipy.sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
+        W, V = scipy.sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
         print W
-        values = V[:,-2]
+        values = V[:, -2]
     result = np.zeros_like(data).astype(np.float)
     result[mask] = values
     return result
@@ -498,6 +547,7 @@ def test_2d():
     lx = 70
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
+    print "making"
     labels_bf = random_walker(data, labels, beta=90)
     data, labels = make_2d_syntheticdata(lx, ly)
     assert (labels_bf.reshape((lx, ly))[25:45, 40:60] == 2).all()
@@ -512,6 +562,7 @@ def test_2d_inactive():
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
     labels[10:20, 10:20] = -1
+    print "making"
     labels[46:50, 33:38] = -2
     labels = random_walker(data, labels, beta=90)
     assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
