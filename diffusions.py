@@ -146,6 +146,19 @@ def make_3d_syntheticdata(lx, ly=None, lz=None):
 #-----------Laplacian--------------------
 
 def _make_edges_3d(lx, ly=None, lz=None):
+    """ Returns a list of edges for a 3D image.
+    
+        Parameters
+        ===========
+        lx: integer
+            The size of the grid in the x direction.
+        ly: integer, optinal
+            The size of the grid in the y direction, defaults
+            to lx.
+        lz: integer, optinal
+            The size of the grid in the z direction, defaults
+            to lx.
+    """
     if ly is None:
         ly = lx
     if lz is None:
