@@ -34,7 +34,7 @@ except:
 
 
 
-def myin1d(ar1, ar2, assume_unique=False):
+def my_in1d(ar1, ar2, assume_unique=False):
     if not assume_unique:
         ar1, rev_idx = unique(ar1, return_inverse=True)
         ar2 = np.unique(ar2)
@@ -91,16 +91,16 @@ def unique(ar, return_index=False, return_inverse=False):
         return ar[flag]
 
 
-def test_myin1d():
+def test_my_in1d():
     a = np.arange(10)
     b = a[a%2 == 0]
-    assert myin1d(a, b).sum() == 5
+    assert my_in1d(a, b).sum() == 5
 
 
 if np.__version__ >= '1.4':
     from numpy import in1d
 else:
-    in1d = myin1d
+    in1d = my_in1d
 
 
 #--------- Synthetic data ---------------
