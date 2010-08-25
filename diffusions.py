@@ -170,6 +170,34 @@ def _make_weights_3d(edges, data, beta=130, eps=1.e-6):
     weights = np.exp(- beta*gradients / (10*data.std())) + eps
     return weights
 
+def _make_distances_3d(edges, data):
+    lx, ly, lz = data.shape
+    gradients = np.abs(data[edges[0]/(ly*lz), \
+                                 (edges[0] % (ly*lz))/lz, \
+                                 (edges[0] % (ly*lz))%lz] - \
+                            data[edges[1]/(ly*lz), \
+                                 (edges[1] % (ly*lz))/lz, \
+                                 (edges[1] % (ly*lz)) % lz])
+    return gradients
+
+def _make_adaptive_weights(edges, data):
+    print "adaptive"
+    pixel_nb = len(np.unique(edges.ravel()))
+    gradients = _make_distances_3d(edges, data)
+    i_indices = np.hstack((edges[0], edges[1]))
+    j_indices = np.hstack((edges[1], edges[0]))
+    w = np.hstack((gradients, gradients))
+    nb = np.bincount(i_indices).astype(np.float)
+    total_weight = np.bincount(i_indices, weights=w)
+    sigmas = total_weight / nb
+    sigma_of_edges = np.array([sigmas[edges[0]], sigmas[edges[1]]])
+    return _make_weights_adaptative(gradients, sigma_of_edges)
+
+def _make_weights_adaptative(gradients, sigma_of_edges, eps=1.e-10):
+    sigma_i, sigma_j = sigma_of_edges
+    weights = np.exp(- gradients**2 / (sigma_i * sigma_j)) + eps
+    return weights 
+
 def _make_laplacian_sparse(edges, weights):
     """
     Sparse implementation
@@ -190,8 +218,7 @@ def _make_normed_laplacian(edges, weights):
     """
     Sparse implementation
     """
-    tol = 1.e-8
-    eps = 1.e-5
+    eps = 0
     pixel_nb = len(np.unique(edges.ravel()))
     diag = np.arange(pixel_nb)
     i_indices = np.hstack((edges[0], edges[1]))
@@ -199,10 +226,11 @@ def _make_normed_laplacian(edges, weights):
     data = np.hstack((-weights, -weights))
     lap = coo_matrix((data, (i_indices, j_indices)), shape=(pixel_nb, pixel_nb))
     w = -np.ravel(lap.sum(axis=1))
+    print w.min(), w.max()
     data *= 1. / (np.sqrt(w[i_indices]*w[j_indices]))
-    data = np.hstack((data, eps*np.ones_like(diag)))
-    i_indices = np.hstack((i_indices, diag))
-    j_indices = np.hstack((j_indices, diag))
+    #data = np.hstack((data, eps*np.ones_like(diag)))
+    #i_indices = np.hstack((i_indices, diag))
+    #j_indices = np.hstack((j_indices, diag))
     lap = coo_matrix((-data, (i_indices, j_indices)),\
             shape=(pixel_nb, pixel_nb))
     return lap.tocsc(), w
@@ -245,7 +273,10 @@ def _trim_edges_weights(edges, weights, mask):
 def _build_laplacian(data, mask=None, normed=False, beta=50):
     lx, ly, lz = data.shape
     edges = _make_edges_3d(lx, ly, lz)
-    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
+    if beta==None:
+        weights = _make_adaptive_weights(edges, data)
+    else:
+        weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
     if mask is not None:
         edges, weights = _trim_edges_weights(edges, weights, mask)
     if not normed:

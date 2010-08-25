@@ -43,11 +43,13 @@ def spectral_embedding_sparse(adjacency, k_max=14, mode='amg', take_first=True):
         print 'amg'
         sh = adjacency.shape[0]
         adjacency = adjacency.copy()
-        diag = sparse.coo_matrix((diag_weights.ravel(), (range(sh), range(sh))))
+        #diag = sparse.coo_matrix((diag_weights.ravel(), (range(sh), range(sh))))
+        diag = sparse.eye(sh, sh)
         adjacency =  - adjacency + diag
         ml = smoothed_aggregation_solver(adjacency.tocsr())
         X = scipy.rand(adjacency.shape[0], k_max) 
-        X[:, 0] = 1. / np.sqrt(adjacency.shape[0])
+        #X[:, 0] = 1. / np.sqrt(adjacency.shape[0])
+        X[:, 0] = 1. / dd.ravel()
         M = ml.aspreconditioner()
         lambdas, diffusion_map = lobpcg(adjacency, X, M=M, tol=1.e-12, largest=False)
         print lambdas
@@ -145,6 +147,23 @@ def q_score(adjacency, labels):
         #q -= (weights[label == labels].sum()/total_weights)**2
     return 2 * q
 
+def n_cut(adjacency, labels):
+    """ Returns the Q score of a clustering.
+    """
+    q = 0
+    """
+    if isinstance(adjacency, sparse.csc.csc_matrix):
+        adjacency = np.array(adjacency.todense())
+    """
+    weights = adjacency
+    total_weights = 0.5 * weights.sum()
+    for label in np.unique(labels):
+        inds = np.nonzero(labels == label)[0]
+        a = (weights[inds][:, inds]).sum()
+        b = weights[inds].sum()
+        q += (b - a)/b
+    return - q
+
 
 def best_k_means(k, maps, adjacency, n_bst=10):
     from nipy.neurospin.clustering.clustering import _kmeans
@@ -152,7 +171,8 @@ def best_k_means(k, maps, adjacency, n_bst=10):
     for _ in range(n_bst):
         print "doing kmeans"
         _, labels, _ = _kmeans(maps, nbclusters=k)
-        score = q_score(adjacency, labels)
+        #score = q_score(adjacency, labels)
+        score = n_cut(adjacency, labels)
         if score > best_score:
             best_score = score
             best_labels = labels
@@ -196,12 +216,12 @@ def communities_clustering_sparse(adjacency, k_best=None, k_min=2, k_max=8, n_bs
         this_maps = maps[:k_best - 1].T.copy()
         res, scores = best_k_means(k_best, this_maps, adjacency,
                                  n_bst=4*n_bst)
-        print 'Final : k=%i, score=%s' % (k_best, score)
+        print 'Final : k=%i, score=%s' % (k_best, scores)
     return res, scores
 
 def separate_in_regions(data, mask, k_best=None, k_min=2, k_max=8, \
-                                    center=None, only_connex=True, \
-                                    take_first=True, beta=10, mode='bf'):
+                                center=None, only_connex=True, n_times=4,\
+                                take_first=True, beta=10, mode='bf'):
     labs, nb_labels = ndimage.label(mask)
     if nb_labels > 1:
         if center is None:
@@ -212,10 +232,10 @@ def separate_in_regions(data, mask, k_best=None, k_min=2, k_max=8, \
         mask = labs == ind_max
     lap, w = _build_laplacian(np.atleast_3d(data), mask=np.atleast_3d(mask), \
                 normed=True, beta=beta)
-    return lap, w
     print lap.shape
     res, scores = communities_clustering_sparse(lap, k_best=k_best, \
-                    k_min=k_min, k_max=k_max, take_first=take_first, mode=mode)
+                    k_min=k_min, k_max=k_max, n_bst=n_times, \
+                    take_first=take_first, mode=mode)
     if not only_connex:
         if k_best==None:
             labels = dict()
