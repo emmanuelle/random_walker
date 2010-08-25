@@ -8,26 +8,25 @@ The algorithms of this module are based on the "random walker" algorithm.
 # Copyright (c) 2009-2010, Emmanuelle Gouillart
 # License: BSD
 
-import numpy as np
-import scipy, scipy.linalg
-try:
-    from pyamg import smoothed_aggregation_solver
-    amg_loaded = True
-except ImportError:
-    amg_loaded = False 
-from scipy import sparse
-from scipy import ndimage
-from scipy.sparse.linalg.eigen.arpack import eigen_symmetric
 import warnings
+
+import numpy as np
+from scipy import sparse, ndimage
+from scipy.sparse.linalg.eigen.arpack import eigen_symmetric
 try: 
     from scipy.sparse.linalg.dsolve import umfpack
     u = umfpack.UmfpackContext()
 except:
     warnings.warn("""Scipy was built without UMFPACK. Consider rebuilding 
-    Scipy with UMFPACK, this will accelerate greatly the speed of the random
-    walker functions. You may also install pyamg and run the random walker
-    function in amg mode (see the docstrings)
+    Scipy with UMFPACK, this will greatly speed up the random walker 
+    functions. You may also install pyamg and run the random walker function 
+    in amg mode (see the docstrings)
     """)
+try:
+    from pyamg import smoothed_aggregation_solver
+    amg_loaded = True
+except ImportError:
+    amg_loaded = False 
 
 
 
@@ -255,10 +254,10 @@ def _buildAB(lap_sparse, labels):
     B = lap_sparse[unmarked][:, seeds_indices]
     lap_sparse = lap_sparse[unmarked][:, unmarked]
     nlabels = labels.max()
-    Bi = scipy.sparse.lil_matrix((nlabels, B.shape[0]))
+    Bi = sparse.lil_matrix((nlabels, B.shape[0]))
     for lab in range(1, nlabels+1):
         print lab
-        fs = scipy.sparse.csr_matrix((labels[seeds_indices] == lab)\
+        fs = sparse.csr_matrix((labels[seeds_indices] == lab)\
                                                 [:, np.newaxis])
         Bi[lab-1, :] = (B.tocsr()* fs)
     return lap_sparse, Bi
@@ -394,7 +393,7 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
     # first at pixel j by diffusion
     if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
-        solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
+        solver = sparse.linalg.factorized(lap_sparse.astype(np.double))
         X = np.array([solver(np.array((-B[i, :]).todense()).ravel())\
                 for i in range(B.shape[0])])
         X= np.argmax(X, axis=0) + 1
@@ -487,12 +486,12 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
     lap_sparse = _build_laplacian(data)
     print "lap ok"
     dia = range(data.size)
-    lap_sparse = lap_sparse +scipy.sparse.lil_diags(
+    lap_sparse = lap_sparse + sparse.lil_diags(
                             [gamma*prior.sum(axis=0)], [0], lap_sparse.shape)
     del dia
     if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
-        solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
+        solver = sparse.linalg.factorized(lap_sparse.astype(np.double))
         X = np.array([solver(gamma*label_prior)
                       for label_prior in prior])
     elif mode == 'amg':
@@ -562,10 +561,10 @@ def fiedler_vector(data, mask, mode='bf'):
         values = 1. / np.sqrt(w) * vv[1][:, -2]
     if mode == 'amg':
         ml = smoothed_aggregation_solver(lap.tocsr())
-        X = scipy.rand(lap.shape[0], 4)
+        X = np.rand(lap.shape[0], 4)
         X[:, 0] = 1. / np.sqrt(lap.shape[0])
         M = ml.aspreconditioner()
-        W, V = scipy.sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
+        W, V = sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
         print W
         values = V[:, -2]
     result = np.zeros_like(data).astype(np.float)
