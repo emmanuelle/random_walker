@@ -173,12 +173,7 @@ def _make_edges_3d(lx, ly=None, lz=None):
 
 def _make_weights_3d(edges, data, beta=130, eps=1.e-6):
     lx, ly, lz = data.shape
-    gradients = (data[edges[0]/(ly*lz), \
-                                 (edges[0] % (ly*lz))/lz, \
-                                 (edges[0] % (ly*lz))%lz] - \
-                            data[edges[1]/(ly*lz), \
-                                 (edges[1] % (ly*lz))/lz, \
-                                 (edges[1] % (ly*lz)) % lz])**2 
+    gradients = _make_distances_3d(edges, data)**2 
     weights = np.exp(- beta*gradients / (10*data.std())) + eps
     return weights
 
