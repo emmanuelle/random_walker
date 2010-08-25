@@ -17,7 +17,6 @@ except ImportError:
     amg_loaded = False 
 from scipy import sparse
 from scipy import ndimage
-import scipy.sparse.linalg.eigen.arpack
 from scipy.sparse.linalg.eigen.arpack import eigen_symmetric
 import warnings
 try: 
@@ -558,7 +557,6 @@ def fiedler_vector(data, mask, mode='bf'):
     lap, w = _build_laplacian(np.atleast_3d(data), 
                 np.atleast_3d(mask), normed=True)
     if mode == 'bf':
-        #vv = scipy.sparse.linalg.eigen.arpack.eigen_symmetric(lap, which='LA', k=5)
         vv = eigen_symmetric(lap, which='LA', k=5)
         print vv[0]
         values = 1. / np.sqrt(w) * vv[1][:, -2]
