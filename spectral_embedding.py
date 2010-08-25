@@ -223,6 +223,63 @@ def communities_clustering_sparse(adjacency, k_best=None, k_min=2, k_max=8, n_bs
 def separate_in_regions(data, mask=None, k_best=None, k_min=2, k_max=8, \
                                 center=None, only_connex=True, n_times=4,\
                                 take_first=True, beta=10, mode='bf'):
+    """
+    Separate an image in different regions, using spectral clustering.
+
+    Parameters
+    ----------
+
+    data: array
+        Image to be segmented in regions. `data` can be two- or
+        three-dimensional.
+
+    mask: array, optional
+        Mask of the pixels to be clustered. If mask is None, all pixels
+        are clustered.
+
+    k_best: int, optional
+        number of clusters to be found. If k_best is None, the clustering
+        is performed for a range of numbers given by k_min and k_max.
+
+    k_min: int, optional
+        minimum number of clusters 
+
+    k_max: int, optional
+        maximum number of clusters
+
+    center: tuple-like, optional
+        coordinates of a point included in the connected component to be
+        segmented, if there are several connected components.
+
+    only_connex: boolean, optional
+        whether to return only the segmentation of the principal connected 
+        component or the (non-clustered) other components as well.
+
+    n_times: int, optional
+        how many times the k_means clustering is performed for each k
+
+    take_first: boolean, optional
+        whether to take the first eigenmode (of eigenvalue 0) for the clustering
+        or not. One should not take it for k=2, but I get better results with it
+        for k >= 4 in my images.
+
+    beta: float, optional
+        normalization parameter used to compute the weight of a link. The greater
+        beta, the more gradients are penalized.
+
+    mode: str, {'bf', 'amg'}
+        how the eigenmode of the spectral embedding are computed. 'bf' uses 
+        arpack, and 'amg' pyamg (multigrid methods). 'amg' should be much faster.
+
+    Returns
+    -------
+
+    labels: array or dict with array values
+        result of clustering. If k_best is None, a dict is return and 
+        label[k] is the clustering in k clusters, for k_min <= k <= k_max
+
+    scores: int or dict with int values
+    """
     if mask is not None:
         labs, nb_labels = ndimage.label(mask)
     else:
