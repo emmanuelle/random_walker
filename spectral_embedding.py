@@ -171,12 +171,13 @@ def best_k_means(k, maps, adjacency, n_bst=10):
     for _ in range(n_bst):
         print "doing kmeans"
         _, labels, _ = _kmeans(maps, nbclusters=k)
-        #score = q_score(adjacency, labels)
+        score2 = q_score(adjacency, labels)
         score = n_cut(adjacency, labels)
         if score > best_score:
             best_score = score
+            best_score2 = score2
             best_labels = labels
-    return best_labels, best_score
+    return best_labels, best_score2 #best_score
 
 
 def communities_clustering(adjacency, k_best=None, n_bst=2):
@@ -219,10 +220,15 @@ def communities_clustering_sparse(adjacency, k_best=None, k_min=2, k_max=8, n_bs
         print 'Final : k=%i, score=%s' % (k_best, scores)
     return res, scores
 
-def separate_in_regions(data, mask, k_best=None, k_min=2, k_max=8, \
+def separate_in_regions(data, mask=None, k_best=None, k_min=2, k_max=8, \
                                 center=None, only_connex=True, n_times=4,\
                                 take_first=True, beta=10, mode='bf'):
-    labs, nb_labels = ndimage.label(mask)
+    if mask is not None:
+        labs, nb_labels = ndimage.label(mask)
+    else:
+        mask = np.ones_like(data).astype(bool)
+        nb_labels = 1
+    mask = np.atleast_3d(mask)
     if nb_labels > 1:
         if center is None:
             sizes = np.array(ndimage.sum(mask, labs, range(1, nb_labels + 1)))
@@ -230,12 +236,13 @@ def separate_in_regions(data, mask, k_best=None, k_min=2, k_max=8, \
         else:
             ind_max = labs[tuple(center)]
         mask = labs == ind_max
-    lap, w = _build_laplacian(np.atleast_3d(data), mask=np.atleast_3d(mask), \
+    lap, w = _build_laplacian(np.atleast_3d(data), mask=mask, \
                 normed=True, beta=beta)
     print lap.shape
     res, scores = communities_clustering_sparse(lap, k_best=k_best, \
                     k_min=k_min, k_max=k_max, n_bst=n_times, \
                     take_first=take_first, mode=mode)
+    mask = np.squeeze(mask)
     if not only_connex:
         if k_best==None:
             labels = dict()
