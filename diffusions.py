@@ -106,7 +106,7 @@ else:
 #--------- Synthetic data ---------------
 
 def make_2d_syntheticdata(lx, ly=None):
-    if ly == None:
+    if ly is None:
         ly = lx
     data = np.zeros((lx, ly)) + 0.1*np.random.randn(lx, ly)
     small_l = int(lx / 5)
@@ -121,9 +121,9 @@ def make_2d_syntheticdata(lx, ly=None):
     return data, seeds
 
 def make_3d_syntheticdata(lx, ly=None, lz=None):
-    if ly == None:
+    if ly is None:
         ly = lx
-    if lz == None:
+    if lz is None:
         lz = lx
     data = np.zeros((lx, ly, lz)) + 0.1*np.random.randn(lx, ly, lz)
     small_l = int(lx/5)
@@ -147,9 +147,9 @@ def make_3d_syntheticdata(lx, ly=None, lz=None):
 #-----------Laplacian--------------------
 
 def _make_edges_3d(lx, ly=None, lz=None):
-    if ly == None:
+    if ly is None:
         ly = lx
-    if lz == None:
+    if lz is None:
         lz = lx
     vertices = np.arange(lx*ly*lz).reshape((lx, ly, lz))
     edges_deep = np.vstack((vertices[:, :, :-1].ravel(),\
@@ -273,7 +273,7 @@ def _trim_edges_weights(edges, weights, mask):
 def _build_laplacian(data, mask=None, normed=False, beta=50):
     lx, ly, lz = data.shape
     edges = _make_edges_3d(lx, ly, lz)
-    if beta==None:
+    if beta is None:
         weights = _make_adaptive_weights(edges, data)
     else:
         weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
