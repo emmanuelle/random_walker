@@ -10,7 +10,6 @@ The algorithms of this module are based on the "random walker" algorithm.
 
 import numpy as np
 import scipy, scipy.linalg
-from scipy.sparse import coo_matrix, lil_matrix
 try:
     from pyamg import smoothed_aggregation_solver
     amg_loaded = True
@@ -110,10 +109,10 @@ def make_2d_syntheticdata(lx, ly=None):
         ly = lx
     data = np.zeros((lx, ly)) + 0.1*np.random.randn(lx, ly)
     small_l = int(lx / 5)
-    data[lx/2 - small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l]=1
+    data[lx/2 - small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l] = 1
     data[lx/2 - small_l+1:lx/2+small_l-1, \
-        ly/2-small_l+1:ly/2+small_l-1] = \
-        0.1 * np.random.randn(2*small_l-2, 2*small_l-2)
+         ly/2-small_l+1:ly/2+small_l-1] = \
+                        0.1 * np.random.randn(2*small_l-2, 2*small_l-2)
     data[lx/2-small_l, ly/2-small_l/8:ly/2+small_l/8] = 0
     seeds = np.zeros_like(data)
     seeds[lx/5, ly/5] = 1
@@ -128,11 +127,11 @@ def make_3d_syntheticdata(lx, ly=None, lz=None):
     data = np.zeros((lx, ly, lz)) + 0.1*np.random.randn(lx, ly, lz)
     small_l = int(lx/5)
     data[lx/2-small_l:lx/2+small_l,\
-        ly/2-small_l:ly/2+small_l,\
-        lz/2-small_l:lz/2+small_l] = 1
+         ly/2-small_l:ly/2+small_l,\
+         lz/2-small_l:lz/2+small_l] = 1
     data[lx/2-small_l+1:lx/2+small_l-1,\
-        ly/2-small_l+1:ly/2+small_l-1,
-        lz/2-small_l+1:lz/2+small_l-1] = 0
+         ly/2-small_l+1:ly/2+small_l-1,
+         lz/2-small_l+1:lz/2+small_l-1] = 0
     # make a hole
     hole_size = np.max([1, small_l/8])
     data[lx/2-small_l,\
@@ -152,8 +151,8 @@ def _make_edges_3d(lx, ly=None, lz=None):
     if lz is None:
         lz = lx
     vertices = np.arange(lx*ly*lz).reshape((lx, ly, lz))
-    edges_deep = np.vstack((vertices[:, :, :-1].ravel(),\
-        vertices[:, :, 1:].ravel()))
+    edges_deep = np.vstack((vertices[:, :, :-1].ravel(),
+                            vertices[:, :, 1:].ravel()))
     edges_right = np.vstack((vertices[:, :-1].ravel(), vertices[:, 1:].ravel()))
     edges_down = np.vstack((vertices[:-1].ravel(), vertices[1:].ravel()))
     edges = np.hstack((edges_deep, edges_right, edges_down))
@@ -182,10 +181,8 @@ def _make_distances_3d(edges, data):
 
 def _make_adaptive_weights(edges, data):
     print "adaptive"
-    pixel_nb = len(np.unique(edges.ravel()))
     gradients = _make_distances_3d(edges, data)
     i_indices = np.hstack((edges[0], edges[1]))
-    j_indices = np.hstack((edges[1], edges[0]))
     w = np.hstack((gradients, gradients))
     nb = np.bincount(i_indices).astype(np.float)
     total_weight = np.bincount(i_indices, weights=w)
@@ -207,32 +204,33 @@ def _make_laplacian_sparse(edges, weights):
     i_indices = np.hstack((edges[0], edges[1]))
     j_indices = np.hstack((edges[1], edges[0]))
     data = np.hstack((-weights, -weights))
-    lap = coo_matrix((data, (i_indices, j_indices)), shape=(pixel_nb, pixel_nb))
+    lap = sparse.coo_matrix((data, (i_indices, j_indices)), 
+                            shape=(pixel_nb, pixel_nb))
     connect = - np.ravel(lap.sum(axis=1)) 
-    lap = coo_matrix((np.hstack((data, connect)), \
-            (np.hstack((i_indices,diag)), \
-             np.hstack((j_indices, diag)))), shape=(pixel_nb, pixel_nb))
+    lap = sparse.coo_matrix((np.hstack((data, connect)),
+                (np.hstack((i_indices,diag)), np.hstack((j_indices, diag)))), 
+                shape=(pixel_nb, pixel_nb))
     return lap.tocsc()
 
 def _make_normed_laplacian(edges, weights):
     """
     Sparse implementation
     """
-    eps = 0
     pixel_nb = len(np.unique(edges.ravel()))
-    diag = np.arange(pixel_nb)
     i_indices = np.hstack((edges[0], edges[1]))
     j_indices = np.hstack((edges[1], edges[0]))
     data = np.hstack((-weights, -weights))
-    lap = coo_matrix((data, (i_indices, j_indices)), shape=(pixel_nb, pixel_nb))
+    lap = sparse.coo_matrix((data, (i_indices, j_indices)), 
+                            shape=(pixel_nb, pixel_nb))
     w = -np.ravel(lap.sum(axis=1))
     print w.min(), w.max()
     data *= 1. / (np.sqrt(w[i_indices]*w[j_indices]))
+    #eps = 0
     #data = np.hstack((data, eps*np.ones_like(diag)))
     #i_indices = np.hstack((i_indices, diag))
     #j_indices = np.hstack((j_indices, diag))
-    lap = coo_matrix((-data, (i_indices, j_indices)),\
-            shape=(pixel_nb, pixel_nb))
+    lap = sparse.coo_matrix((-data, (i_indices, j_indices)),
+                            shape=(pixel_nb, pixel_nb))
     return lap.tocsc(), w
 
 def _clean_labels_ar(X, labels):
@@ -477,20 +475,19 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         >>> prior = np.array([p, q])
         >>> labs = random_walker_prior(a, prior)
     """
-    k = prior.shape[1]
     data = np.atleast_3d(data)
     print "building lap"
     lap_sparse = _build_laplacian(data)
     print "lap ok"
     dia = range(data.size)
-    lap_sparse = lap_sparse +scipy.sparse.lil_diags(\
-        [gamma*prior.sum(axis=0)], [0], lap_sparse.shape)
+    lap_sparse = lap_sparse +scipy.sparse.lil_diags(
+                            [gamma*prior.sum(axis=0)], [0], lap_sparse.shape)
     del dia
     if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
         solver = scipy.sparse.linalg.factorized(lap_sparse.astype(np.double))
-        X = np.array([solver(gamma*label_prior)\
-                for label_prior in prior])
+        X = np.array([solver(gamma*label_prior)
+                      for label_prior in prior])
     elif mode == 'amg':
         if not amg_loaded:
             print """the pyamg module (http://code.google.com/p/pyamg/)
@@ -502,8 +499,8 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         mls = smoothed_aggregation_solver(lap_sparse)
         del lap_sparse
         print "mls ok"
-        X = np.array([mls.solve(gamma*label_prior)\
-                for label_prior in prior])
+        X = np.array([mls.solve(gamma*label_prior)
+                      for label_prior in prior])
         del mls
     return np.squeeze((np.argmax(X, axis=0)).reshape(data.shape))
 
