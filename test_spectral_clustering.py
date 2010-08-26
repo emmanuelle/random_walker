@@ -1,6 +1,7 @@
 import numpy as np
 from diffusions import _build_laplacian
 import pyamg
+from spectral_embedding import separate_in_regions
 
 l = 100
 X, Y = np.indices((l, l))
