@@ -198,7 +198,7 @@ def _make_adaptive_weights(edges, data):
 
 def _make_weights_adaptative(gradients, sigma_of_edges, eps=1.e-10):
     sigma_i, sigma_j = sigma_of_edges
-    weights = np.exp(- gradients**2 / (sigma_i * sigma_j)) + eps
+    weights = np.exp(- gradients**2 / (sigma_i * sigma_j + eps)) + eps
     return weights 
 
 def _make_laplacian_sparse(edges, weights):
