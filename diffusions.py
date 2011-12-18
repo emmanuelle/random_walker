@@ -28,17 +28,13 @@ except ImportError:
     amg_loaded = False 
 import scipy
 scipy_version = scipy.__version__.split('.')
-if scipy_version[1] >= 9:
-    from scipy.sparse.linalg.eigen.arpack import eigsh
-else:
-    from scipy.sparse.linalg.eigen.arpack import eigen_symmetric as eigsh
 
 
 
 
 #-----------Laplacian--------------------
 
-def _make_edges_3d(lx, ly=None, lz=None):
+def _make_edges_3d(lx, ly, lz):
     """ Returns a list of edges for a 3D image.
     
         Parameters
@@ -52,10 +48,6 @@ def _make_edges_3d(lx, ly=None, lz=None):
             The size of the grid in the z direction, defaults
             to lx.
     """
-    if ly is None:
-        ly = lx
-    if lz is None:
-        lz = lx
     vertices = np.arange(lx*ly*lz).reshape((lx, ly, lz))
     edges_deep = np.vstack((vertices[:, :, :-1].ravel(),
                             vertices[:, :, 1:].ravel()))
@@ -80,22 +72,6 @@ def _make_distances_3d(edges, data):
                                  (edges[1] % (ly*lz)) % lz])
     return gradients
 
-def _make_adaptive_weights(edges, data):
-    print "adaptive"
-    gradients = _make_distances_3d(edges, data)
-    i_indices = np.hstack((edges[0], edges[1]))
-    w = np.hstack((gradients, gradients))
-    nb = np.bincount(i_indices).astype(np.float)
-    total_weight = np.bincount(i_indices, weights=w)
-    sigmas = total_weight / nb
-    sigma_of_edges = np.array([sigmas[edges[0]], sigmas[edges[1]]])
-    return _make_weights_adaptative(gradients, sigma_of_edges)
-
-def _make_weights_adaptative(gradients, sigma_of_edges, eps=1.e-10):
-    sigma_i, sigma_j = sigma_of_edges
-    weights = np.exp(- gradients**2 / (sigma_i * sigma_j + eps)) + eps
-    return weights 
-
 def _make_laplacian_sparse(edges, weights):
     """
     Sparse implementation
@@ -112,23 +88,6 @@ def _make_laplacian_sparse(edges, weights):
                 (np.hstack((i_indices,diag)), np.hstack((j_indices, diag)))), 
                 shape=(pixel_nb, pixel_nb))
     return lap.tocsc()
-
-def _make_normed_laplacian(edges, weights):
-    """
-    Sparse implementation
-    """
-    pixel_nb = len(np.unique(edges.ravel()))
-    i_indices = np.hstack((edges[0], edges[1]))
-    j_indices = np.hstack((edges[1], edges[0]))
-    data = np.hstack((-weights, -weights))
-    lap = sparse.coo_matrix((data, (i_indices, j_indices)), 
-                            shape=(pixel_nb, pixel_nb))
-    w = -np.ravel(lap.sum(axis=1))
-    print w.min(), w.max()
-    data *= 1. / (np.sqrt(w[i_indices]*w[j_indices]))
-    lap = sparse.coo_matrix((-data, (i_indices, j_indices)),
-                            shape=(pixel_nb, pixel_nb))
-    return lap.tocsc(), w
 
 def _clean_labels_ar(X, labels):
     labels = np.ravel(labels)
@@ -147,7 +106,6 @@ def _buildAB(lap_sparse, labels):
     nlabels = labels.max()
     Bi = sparse.lil_matrix((nlabels, B.shape[0]))
     for lab in range(1, nlabels+1):
-        print lab
         fs = sparse.csr_matrix((labels[seeds_indices] == lab)\
                                                 [:, np.newaxis])
         Bi[lab-1, :] = (B.tocsr()* fs)
@@ -168,10 +126,7 @@ def _trim_edges_weights(edges, weights, mask):
 def _build_laplacian(data, mask=None, normed=False, beta=50):
     lx, ly, lz = data.shape
     edges = _make_edges_3d(lx, ly, lz)
-    if beta is None:
-        weights = _make_adaptive_weights(edges, data)
-    else:
-        weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
+    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
     if mask is not None:
         edges, weights = _trim_edges_weights(edges, weights, mask)
     if not normed:
@@ -187,6 +142,7 @@ def _build_laplacian(data, mask=None, normed=False, beta=50):
 
 #----------- Random walker algorithms (with markers or with prior) -------------
 
+@profile
 def random_walker(data, labels, beta=130, mode='bf', copy=True):
     """
         Segmentation with random walker algorithm by Leo Grady, 
@@ -284,7 +240,7 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
         solver = sparse.linalg.factorized(lap_sparse.astype(np.double))
         X = np.array([solver(np.array((-B[i, :]).todense()).ravel())\
                 for i in range(B.shape[0])])
-        X= np.argmax(X, axis=0) + 1
+        X = np.argmax(X, axis=0) + 1
         data = np.squeeze(data)
         return (_clean_labels_ar(X, labels)).reshape(data.shape)
     elif mode == 'amg':
@@ -308,9 +264,6 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
         ll = _clean_labels_ar(ll + 1, labels)
         data = np.squeeze(data)
         return ll.reshape(data.shape)
-
-
-
 
 
 def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
@@ -369,9 +322,7 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         >>> labs = random_walker_prior(a, prior)
     """
     data = np.atleast_3d(data)
-    print "building lap"
-    lap_sparse = _build_laplacian(data)
-    print "lap ok"
+    lap_sparse = _build_laplacian(data, beta=50)
     dia = range(data.size)
     shx, shy = lap_sparse.shape
     lap_sparse = lap_sparse + sparse.coo_matrix(
@@ -395,66 +346,6 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
         del mls
     return np.squeeze((np.argmax(X, axis=0)).reshape(data.shape))
 
-def fiedler_vector(data, mask, mode='bf'):
-    """
-    Compute the second eigenmode of the Laplacian built on data,
-    which separates in two main diffusions basins. Useful to separate
-    an image in two regions.
-
-    Parameters
-    ----------
-    data: ndarray of floats
-        Array containing two objects stuck together that one 
-        wants to separate.
-
-    mask: ndarray of bools
-        Mask defining the region of interest to be separated in
-        two regions.
-
-    mode : {'bf', 'amg'}
-        Mode for computing the eigenmode of the Laplacian. `mode` can 
-        be either 'bf' (for brute force) or 'amg' (for algebraic 
-        multigrid solver), in which case a multigrid approach is used. 
-        The 'amg' mode uses the pyamg module 
-        (http://code.google.com/p/pyamg/), which must be installed
-        to use this mode.
-
-    Note
-    ----
-    The algorithm does not work well if more than two objects are
-    stuck together, or if mask has more than one connex component.
-
-    References
-    ----------
-    www.stat.cmu.edu/~cshalizi/350/lectures/15/lecture-15.pdf
-
-    Examples
-    --------
-    >>> x, y = np.indices((40, 40))
-    >>> x1, y1, x2, y2 = 14, 14, 28, 26
-    >>> r1, r2 = 11, 10
-    >>> mask_circle1 = (x - x1)**2 + (y - y1)**2 < r1**2
-    >>> mask_circle2 = (x - x2)**2 + (y - y2)**2 < r2**2
-    >>> image = np.logical_or(mask_circle1, mask_circle2)
-    >>> v = fiedler_vector(image, image)
-    """
-    lap, w = _build_laplacian(np.atleast_3d(data), 
-                np.atleast_3d(mask), normed=True)
-    if mode == 'bf':
-        vv = eigsh(lap, which='LM', k=5)
-        print vv[0]
-        values = 1. / np.sqrt(w) * vv[1][:, -2]
-    if mode == 'amg':
-        ml = smoothed_aggregation_solver(lap.tocsr())
-        X = np.rand(lap.shape[0], 4)
-        X[:, 0] = 1. / np.sqrt(lap.shape[0])
-        M = ml.aspreconditioner()
-        W, V = sparse.linalg.lobpcg(-lap, X, M=M, tol=1e-8, largest=True)
-        print W
-        values = V[:, -2]
-    result = np.zeros_like(data).astype(np.float)
-    result[mask] = values
-    return result
 
 
 
