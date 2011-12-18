@@ -29,9 +29,9 @@ except ImportError:
 import scipy
 scipy_version = scipy.__version__.split('.')
 if scipy_version[1] >= 9:
-    from scipy.sparse.linalg.eigen.arpack import eigs
+    from scipy.sparse.linalg.eigen.arpack import eigsh
 else:
-    from scipy.sparse.linalg.eigen.arpack import eigen_symmetric as eigs
+    from scipy.sparse.linalg.eigen.arpack import eigen_symmetric as eigsh
 
 
 
@@ -441,7 +441,7 @@ def fiedler_vector(data, mask, mode='bf'):
     lap, w = _build_laplacian(np.atleast_3d(data), 
                 np.atleast_3d(mask), normed=True)
     if mode == 'bf':
-        vv = eigs(lap, which='LM', k=5)
+        vv = eigsh(lap, which='LM', k=5)
         print vv[0]
         values = 1. / np.sqrt(w) * vv[1][:, -2]
     if mode == 'amg':
