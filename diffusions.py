@@ -34,21 +34,20 @@ scipy_version = scipy.__version__.split('.')
 
 #-----------Laplacian--------------------
 
-def _make_edges_3d(lx, ly, lz):
-    """ Returns a list of edges for a 3D image.
+def _make_edges_3d(n_x, n_y, n_z):
+    """ 
+    Returns a list of edges for a 3D image.
     
-        Parameters
-        ===========
-        lx: integer
-            The size of the grid in the x direction.
-        ly: integer, optinal
-            The size of the grid in the y direction, defaults
-            to lx.
-        lz: integer, optinal
-            The size of the grid in the z direction, defaults
-            to lx.
+    Parameters
+    ===========
+    n_x: integer
+        The size of the grid in the x direction.
+    n_y: integer
+        The size of the grid in the y direction
+    n_z: integer
+        The size of the grid in the z direction
     """
-    vertices = np.arange(lx*ly*lz).reshape((lx, ly, lz))
+    vertices = np.arange(n_x * n_y * n_z).reshape((n_x, n_y, n_z))
     edges_deep = np.vstack((vertices[:, :, :-1].ravel(),
                             vertices[:, :, 1:].ravel()))
     edges_right = np.vstack((vertices[:, :-1].ravel(), vertices[:, 1:].ravel()))
@@ -56,20 +55,20 @@ def _make_edges_3d(lx, ly, lz):
     edges = np.hstack((edges_deep, edges_right, edges_down))
     return edges
 
-def _make_weights_3d(edges, data, beta=130, eps=1.e-6):
-    lx, ly, lz = data.shape
-    gradients = _make_distances_3d(edges, data)**2 
+def _compute_weights_3d(edges, data, beta=130, eps=1.e-6):
+    l_x, l_y, l_z = data.shape
+    gradients = _compute_gradients_3d(edges, data)**2 
     weights = np.exp(- beta*gradients / (10*data.std())) + eps
     return weights
 
-def _make_distances_3d(edges, data):
-    lx, ly, lz = data.shape
-    gradients = np.abs(data[edges[0]/(ly*lz), \
-                                 (edges[0] % (ly*lz))/lz, \
-                                 (edges[0] % (ly*lz))%lz] - \
-                            data[edges[1]/(ly*lz), \
-                                 (edges[1] % (ly*lz))/lz, \
-                                 (edges[1] % (ly*lz)) % lz])
+def _compute_gradients_3d(edges, data):
+    l_x, l_y, l_z = data.shape
+    gradients = np.abs(data[edges[0] / (l_y * l_z), 
+                                 (edges[0] % (l_y * l_z)) / l_z, 
+                                 (edges[0] % (l_y * l_z)) % l_z] - 
+                       data[edges[1] / (l_y * l_z), \
+                                 (edges[1] % (l_y * l_z)) / l_z, \
+                                 (edges[1] % (l_y * l_z)) % l_z])
     return gradients
 
 def _make_laplacian_sparse(edges, weights):
@@ -95,14 +94,13 @@ def _clean_labels_ar(X, labels):
     return labels
 
 def _buildAB(lap_sparse, labels):
-    lx, ly, lz = labels.shape
-    labels = labels.ravel()
+    l_x, l_y, l_z = labels.shape
     labels = labels[labels >= 0]
-    total_ind = np.arange(labels.size) 
-    unmarked = total_ind[labels == 0]
-    seeds_indices = np.setdiff1d(total_ind, unmarked)
-    B = lap_sparse[unmarked][:, seeds_indices]
-    lap_sparse = lap_sparse[unmarked][:, unmarked]
+    indices = np.arange(labels.size) 
+    unlabeled_indices = indices[labels == 0]
+    seeds_indices = indices[labels > 0]
+    B = lap_sparse[unlabeled_indices][:, seeds_indices]
+    lap_sparse = lap_sparse[unlabeled_indices][:, unlabeled_indices]
     nlabels = labels.max()
     Bi = sparse.lil_matrix((nlabels, B.shape[0]))
     for lab in range(1, nlabels+1):
@@ -123,26 +121,20 @@ def _trim_edges_weights(edges, weights, mask):
     return edges, weights
 
 
-def _build_laplacian(data, mask=None, normed=False, beta=50):
-    lx, ly, lz = data.shape
-    edges = _make_edges_3d(lx, ly, lz)
-    weights = _make_weights_3d(edges, data, beta=beta, eps=1.e-10)
+def _build_laplacian(data, mask=None, beta=50):
+    l_x, l_y, l_z = data.shape
+    edges = _make_edges_3d(l_x, l_y, l_z)
+    weights = _compute_weights_3d(edges, data, beta=beta, eps=1.e-10)
     if mask is not None:
         edges, weights = _trim_edges_weights(edges, weights, mask)
-    if not normed:
-        lap =  _make_laplacian_sparse(edges, weights)
-        del edges, weights
-        return lap
-    else:
-        lap, w = _make_normed_laplacian(edges, weights)
-        del edges, weights
-        return lap, w
+    lap =  _make_laplacian_sparse(edges, weights)
+    del edges, weights
+    return lap
 
 
 
 #----------- Random walker algorithms (with markers or with prior) -------------
 
-@profile
 def random_walker(data, labels, beta=130, mode='bf', copy=True):
     """
         Segmentation with random walker algorithm by Leo Grady, 
