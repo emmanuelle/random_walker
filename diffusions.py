@@ -22,14 +22,12 @@ except:
     in amg mode (see the docstrings)
     """)
 try:
-    from pyamg import smoothed_aggregation_solver
+    from pyamg import smoothed_aggregation_solver, solve, ruge_stuben_solver
     amg_loaded = True
 except ImportError:
     amg_loaded = False 
 import scipy
-scipy_version = scipy.__version__.split('.')
-
-
+from scipy.sparse.linalg import cg
 
 
 #-----------Laplacian--------------------
@@ -57,8 +55,9 @@ def _make_edges_3d(n_x, n_y, n_z):
 
 def _compute_weights_3d(edges, data, beta=130, eps=1.e-6):
     l_x, l_y, l_z = data.shape
-    gradients = _compute_gradients_3d(edges, data)**2 
-    weights = np.exp(- beta*gradients / (10*data.std())) + eps
+    gradients = _compute_gradients_3d(edges, data)**2
+    beta /= 10*data.std()
+    weights = np.exp(- beta*gradients) + eps
     return weights
 
 def _compute_gradients_3d(edges, data):
@@ -75,7 +74,7 @@ def _make_laplacian_sparse(edges, weights):
     """
     Sparse implementation
     """
-    pixel_nb = len(np.unique(edges.ravel()))
+    pixel_nb = edges.max() + 1
     diag = np.arange(pixel_nb)
     i_indices = np.hstack((edges[0], edges[1]))
     j_indices = np.hstack((edges[1], edges[0]))
@@ -102,12 +101,12 @@ def _buildAB(lap_sparse, labels):
     B = lap_sparse[unlabeled_indices][:, seeds_indices]
     lap_sparse = lap_sparse[unlabeled_indices][:, unlabeled_indices]
     nlabels = labels.max()
-    Bi = sparse.lil_matrix((nlabels, B.shape[0]))
+    rhs = []
     for lab in range(1, nlabels+1):
         fs = sparse.csr_matrix((labels[seeds_indices] == lab)\
                                                 [:, np.newaxis])
-        Bi[lab-1, :] = (B.tocsr()* fs)
-    return lap_sparse, Bi
+        rhs.append(B.tocsr()* fs)
+    return lap_sparse, rhs
     
 def _trim_edges_weights(edges, weights, mask):
     inds = np.arange(mask.size)
@@ -135,7 +134,7 @@ def _build_laplacian(data, mask=None, beta=50):
 
 #----------- Random walker algorithms (with markers or with prior) -------------
 
-def random_walker(data, labels, beta=130, mode='bf', copy=True):
+def random_walker(data, labels, beta=130, mode='bf', tol=1.e-3, copy=True):
     """
         Segmentation with random walker algorithm by Leo Grady, 
         given some data and an array of labels (the more labeled 
@@ -227,35 +226,66 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
     # lap_sparse X = B
     # where X[i, j] is the probability that a marker of label i arrives 
     # first at pixel j by diffusion
+    if mode == 'cg':
+        X = _solve_cg(lap_sparse, B, tol=tol)
+    if mode == 'cg_mg':
+        X = _solve_cg_mg(lap_sparse, B, tol=tol)
     if mode == 'bf':
-        lap_sparse = lap_sparse.tocsc()
-        solver = sparse.linalg.factorized(lap_sparse.astype(np.double))
-        X = np.array([solver(np.array((-B[i, :]).todense()).ravel())\
-                for i in range(B.shape[0])])
-        X = np.argmax(X, axis=0) + 1
-        data = np.squeeze(data)
-        return (_clean_labels_ar(X, labels)).reshape(data.shape)
+        X = _solve_bf(lap_sparse, B)
     elif mode == 'amg':
-        if not amg_loaded:
-            print """the pyamg module (http://code.google.com/p/pyamg/)
-            must be installed to use the amg mode"""
-            raise ImportError
-        lap_sparse = lap_sparse.tocsr()
-        le = lap_sparse.shape[0]
-        mls = smoothed_aggregation_solver(lap_sparse)
-        del lap_sparse
-        ll = np.zeros(le, dtype=np.int32)
-        proba_max = np.zeros(le, dtype=np.float32)
-        for i in range(B.shape[0]):
-            x = mls.solve(np.ravel(-B[i, :].todense()).astype(np.float32))
-            mask = x > proba_max
-            ll[mask] = i
-            proba_max[mask] = (x[mask]).astype(np.float32)
-            del mask
-        del proba_max
-        ll = _clean_labels_ar(ll + 1, labels)
-        data = np.squeeze(data)
-        return ll.reshape(data.shape)
+        X = _solve_amg(lap_sparse, B, tol=tol)
+    X = _clean_labels_ar(X + 1, labels)
+    data = np.squeeze(data)
+    return X.reshape(data.shape)
+
+def _solve_bf(lap_sparse, B): 
+    lap_sparse = lap_sparse.tocsc()
+    solver = sparse.linalg.factorized(lap_sparse.astype(np.double))
+    X = np.array([solver(np.array((-B[i]).todense()).ravel())\
+            for i in range(len(B))])
+    X = np.argmax(X, axis=0)
+    return X
+
+def _solve_amg(lap_sparse, B, tol):    
+    if not amg_loaded:
+        print """the pyamg module (http://code.google.com/p/pyamg/)
+        must be installed to use the amg mode"""
+        raise ImportError
+    lap_sparse = lap_sparse.tocsr()
+    le = lap_sparse.shape[0]
+    mls = smoothed_aggregation_solver(lap_sparse)
+    del lap_sparse
+    ll = np.zeros(le, dtype=np.int32)
+    proba_max = np.zeros(le, dtype=np.float32)
+    for i, Bi in enumerate(B):
+        x = mls.solve(np.ravel(-Bi.todense()).astype(np.float32))
+        mask = x > proba_max
+        ll[mask] = i
+        proba_max[mask] = (x[mask]).astype(np.float32)
+        del mask
+    del proba_max
+    return ll
+
+def _solve_cg(lap_sparse, B, tol):
+    X = []
+    for i in range(len(B)):
+        x0 = cg(lap_sparse, -B[i].todense(), tol=tol)[0]
+        X.append(x0)
+    X = np.array(X)
+    X = np.argmax(X, axis=0)
+    return X
+
+def _solve_cg_mg(lap_sparse, B, tol):
+    X = []
+    lap_sparse = lap_sparse.tocsr()
+    ml = ruge_stuben_solver(lap_sparse)
+    M = ml.aspreconditioner(cycle='V')
+    for i in range(len(B)):
+        x0 = cg(lap_sparse, -B[i].todense(), tol=tol, M=M, maxiter=30)[0]
+        X.append(x0)
+    X = np.array(X)
+    X = np.argmax(X, axis=0)
+    return X
 
 
 def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
