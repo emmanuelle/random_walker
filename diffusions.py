@@ -12,7 +12,6 @@ import warnings
 
 import numpy as np
 from scipy import sparse, ndimage
-from scipy.sparse.linalg.eigen.arpack import eigen_symmetric
 try: 
     from scipy.sparse.linalg.dsolve import umfpack
     u = umfpack.UmfpackContext()
@@ -27,118 +26,14 @@ try:
     amg_loaded = True
 except ImportError:
     amg_loaded = False 
-
-
-
-
-def my_in1d(ar1, ar2, assume_unique=False):
-    if not assume_unique:
-        ar1, rev_idx = unique(ar1, return_inverse=True)
-        ar2 = np.unique(ar2)
-    ar = np.concatenate( (ar1, ar2) )
-    # We need this to be a stable sort, so always use 'mergesort'
-    # here. The values from the first array should always come before
-    # the values from the second array.
-    order = ar.argsort(kind='mergesort')
-    sar = ar[order]
-    equal_adj = (sar[1:] == sar[:-1])
-    flag = np.concatenate( (equal_adj, [False] ) )
-    indx = order.argsort(kind='mergesort')[:len( ar1 )]
-
-    if assume_unique:
-        return flag[indx]
-    else:
-        return flag[indx][rev_idx]
-
-def unique(ar, return_index=False, return_inverse=False):
-    try:
-        ar = ar.flatten()
-    except AttributeError:
-        if not return_inverse and not return_index:
-            items = sorted(set(ar))
-            return np.asarray(items)
-        else:
-            ar = np.asanyarray(ar).flatten()
-    
-    if ar.size == 0:
-        if return_inverse and return_index:
-            return ar, np.empty(0, np.bool), np.empty(0, np.bool)
-        elif return_inverse or return_index:
-            return ar, np.empty(0, np.bool)
-        else: 
-            return ar
-        
-    if return_inverse or return_index:
-        perm = ar.argsort()
-        aux = ar[perm]
-        flag = np.concatenate(([True], aux[1:] != aux[:-1]))
-        if return_inverse:
-            iflag = np.cumsum(flag) - 1
-            iperm = perm.argsort()
-            if return_index:
-                return aux[flag], perm[flag], iflag[iperm]
-            else:
-                return aux[flag], iflag[iperm]
-        else:
-            return aux[flag], perm[flag]
-
-    else:
-        ar.sort()
-        flag = np.concatenate(([True], ar[1:] != ar[:-1]))
-        return ar[flag]
-
-
-def test_my_in1d():
-    a = np.arange(10)
-    b = a[a%2 == 0]
-    assert my_in1d(a, b).sum() == 5
-
-
-if np.__version__ >= '1.4':
-    from numpy import in1d
+import scipy
+scipy_version = scipy.__version__.split('.')
+if scipy_version[1] >= 9:
+    from scipy.sparse.linalg.eigen.arpack import eigs
 else:
-    in1d = my_in1d
+    from scipy.sparse.linalg.eigen.arpack import eigen_symmetric as eigs
 
 
-#--------- Synthetic data ---------------
-
-def make_2d_syntheticdata(lx, ly=None):
-    if ly is None:
-        ly = lx
-    data = np.zeros((lx, ly)) + 0.1*np.random.randn(lx, ly)
-    small_l = int(lx / 5)
-    data[lx/2 - small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l] = 1
-    data[lx/2 - small_l+1:lx/2+small_l-1, \
-         ly/2-small_l+1:ly/2+small_l-1] = \
-                        0.1 * np.random.randn(2*small_l-2, 2*small_l-2)
-    data[lx/2-small_l, ly/2-small_l/8:ly/2+small_l/8] = 0
-    seeds = np.zeros_like(data)
-    seeds[lx/5, ly/5] = 1
-    seeds[lx/2 + small_l/4, ly/2 - small_l/4] = 2
-    return data, seeds
-
-def make_3d_syntheticdata(lx, ly=None, lz=None):
-    if ly is None:
-        ly = lx
-    if lz is None:
-        lz = lx
-    data = np.zeros((lx, ly, lz)) + 0.1*np.random.randn(lx, ly, lz)
-    small_l = int(lx/5)
-    data[lx/2-small_l:lx/2+small_l,\
-         ly/2-small_l:ly/2+small_l,\
-         lz/2-small_l:lz/2+small_l] = 1
-    data[lx/2-small_l+1:lx/2+small_l-1,\
-         ly/2-small_l+1:ly/2+small_l-1,
-         lz/2-small_l+1:lz/2+small_l-1] = 0
-    # make a hole
-    hole_size = np.max([1, small_l/8])
-    data[lx/2-small_l,\
-            ly/2-hole_size:ly/2+hole_size,\
-            lz/2-hole_size:lz/2+hole_size] = 0
-    seeds = np.zeros_like(data)
-    seeds[lx/5, ly/5, lz/5] = 1
-    seeds[lx/2+small_l/4, ly/2-small_l/4, lz/2-small_l/4] = 2
-    return data, seeds
 
 
 #-----------Laplacian--------------------
@@ -231,10 +126,6 @@ def _make_normed_laplacian(edges, weights):
     w = -np.ravel(lap.sum(axis=1))
     print w.min(), w.max()
     data *= 1. / (np.sqrt(w[i_indices]*w[j_indices]))
-    #eps = 0
-    #data = np.hstack((data, eps*np.ones_like(diag)))
-    #i_indices = np.hstack((i_indices, diag))
-    #j_indices = np.hstack((j_indices, diag))
     lap = sparse.coo_matrix((-data, (i_indices, j_indices)),
                             shape=(pixel_nb, pixel_nb))
     return lap.tocsc(), w
@@ -265,8 +156,8 @@ def _buildAB(lap_sparse, labels):
 def _trim_edges_weights(edges, weights, mask):
     inds = np.arange(mask.size)
     inds = inds[mask.ravel()]
-    ind_mask = np.logical_and(in1d(edges[0], inds),
-                          in1d(edges[1], inds))
+    ind_mask = np.logical_and(np.in1d(edges[0], inds),
+                          np.in1d(edges[1], inds))
     edges, weights = edges[:, ind_mask], weights[ind_mask]
     maxval = edges.max()
     order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
@@ -378,9 +269,6 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
         filled = ndimage.binary_propagation(labels>0, mask=labels>=0)
         labels[np.logical_and(np.logical_not(filled), labels == 0)] = -1
         del filled
-        marked = ndimage.binary_opening(labels >= 0)
-        mask = labels >= 0
-        labels[np.logical_and(mask >= 0, np.logical_not(marked))] = -1
     labels = np.atleast_3d(labels)
     if np.any(labels < 0):
         lap_sparse = _build_laplacian(data, mask=labels >= 0, beta=beta)
@@ -411,7 +299,6 @@ def random_walker(data, labels, beta=130, mode='bf', copy=True):
         ll = np.zeros(le, dtype=np.int32)
         proba_max = np.zeros(le, dtype=np.float32)
         for i in range(B.shape[0]):
-            print i
             x = mls.solve(np.ravel(-B[i, :].todense()).astype(np.float32))
             mask = x > proba_max
             ll[mask] = i
@@ -486,8 +373,9 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
     lap_sparse = _build_laplacian(data)
     print "lap ok"
     dia = range(data.size)
-    lap_sparse = lap_sparse + sparse.lil_diags(
-                            [gamma*prior.sum(axis=0)], [0], lap_sparse.shape)
+    shx, shy = lap_sparse.shape
+    lap_sparse = lap_sparse + sparse.coo_matrix(
+                        (gamma*prior.sum(axis=0), (range(shx), range(shy))))
     del dia
     if mode == 'bf':
         lap_sparse = lap_sparse.tocsc()
@@ -499,12 +387,9 @@ def random_walker_prior(data, prior, mode='bf', gamma=1.e-2):
             print """the pyamg module (http://code.google.com/p/pyamg/)
             must be installed to use the amg mode"""
             raise ImportError
-        print "converting"
         lap_sparse = lap_sparse.tocsr()
-        print "making mls"
         mls = smoothed_aggregation_solver(lap_sparse)
         del lap_sparse
-        print "mls ok"
         X = np.array([mls.solve(gamma*label_prior)
                       for label_prior in prior])
         del mls
@@ -556,7 +441,7 @@ def fiedler_vector(data, mask, mode='bf'):
     lap, w = _build_laplacian(np.atleast_3d(data), 
                 np.atleast_3d(mask), normed=True)
     if mode == 'bf':
-        vv = eigen_symmetric(lap, which='LA', k=5)
+        vv = eigs(lap, which='LM', k=5)
         print vv[0]
         values = 1. / np.sqrt(w) * vv[1][:, -2]
     if mode == 'amg':
@@ -574,89 +459,4 @@ def fiedler_vector(data, mask, mode='bf'):
 
 
 
-#----------- Tests --------------------------------
-
-def test_2d():
-    lx = 70
-    ly = 100
-    data, labels = make_2d_syntheticdata(lx, ly)
-    print "making"
-    labels_bf = random_walker(data, labels, beta=90)
-    data, labels = make_2d_syntheticdata(lx, ly)
-    assert (labels_bf.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    if amg_loaded:
-        labels_amg = random_walker(data, labels, beta=90, mode='amg')
-        assert (labels_amg.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    return data, labels_bf, labels_amg
-
-
-def test_2d_inactive():
-    lx = 70
-    ly = 100
-    data, labels = make_2d_syntheticdata(lx, ly)
-    labels[10:20, 10:20] = -1
-    print "making"
-    labels[46:50, 33:38] = -2
-    labels = random_walker(data, labels, beta=90)
-    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    return data, labels
-
-def test_2d_inactive2():
-    lx = 70
-    ly = 100
-    data, labels = make_2d_syntheticdata(lx, ly)
-    labels[10:20, 10:20] = -1
-    labels[15, 15] = 0
-    labels[10, 10] = 0
-    labels[11, 11] = 1
-    labels = random_walker(data, labels, beta=90)
-    assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    return data, labels
-
-
-def test_3d():    
-    n=30
-    lx, ly, lz = n, n, n
-    data, labels = make_3d_syntheticdata(lx, ly, lz)
-    labels = random_walker(data, labels)
-    assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
-    return data, labels
-
-def test_3d_inactive():
-    n=30
-    lx, ly, lz = n, n, n
-    data, labels = make_3d_syntheticdata(lx, ly, lz)
-    old_labels = np.copy(labels)
-    labels[5:25, 26:29, 26:29] = -1
-    after_labels = np.copy(labels)
-    labels = random_walker(data, labels)
-    assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
-    return data, labels, old_labels, after_labels
-
-def test_fiedler():
-    x, y = np.indices((40, 40))
-    x1, y1, x2, y2 = 14, 14, 28, 26
-    r1, r2 = 10, 10
-    mask_circle1 = (x - x1)**2 + (y - y1)**2 < r1**2
-    mask_circle2 = (x - x2)**2 + (y - y2)**2 < r2**2
-    image = np.logical_or(mask_circle1, mask_circle2)
-    v = fiedler_vector(image, image)
-    vm = v[image]
-    # Test that the image is separated in two regions
-    # that have almost the same area
-    assert np.abs((vm>0).sum() - (vm<0).sum()) <= 2
-    return image, v
-
-def test_rw_with_prior():
-    a = np.zeros((40, 40))
-    a[10:-10, 10:-10] = 1
-    a += 0.7*np.random.random((40, 40))
-    p = a.max() - a.ravel()
-    q = a.ravel()
-    prior = np.array([p, q])
-    labs = random_walker_prior(a, prior)
-    assert (labs[11:-11, 11:-11] == 1).all()
-    if amg_loaded:
-        labs_amg = random_walker_prior(a, prior, mode='amg')
-        assert (labs_amg[11:-11, 11:-11] == 1).all()
  
