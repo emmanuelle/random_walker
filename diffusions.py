@@ -85,7 +85,7 @@ def _make_laplacian_sparse(edges, weights):
     lap = sparse.coo_matrix((np.hstack((data, connect)),
                 (np.hstack((i_indices,diag)), np.hstack((j_indices, diag)))), 
                 shape=(pixel_nb, pixel_nb))
-    return lap.tocsc()
+    return lap.tocsr()
 
 def _clean_labels_ar(X, labels):
     labels = np.ravel(labels)
@@ -93,19 +93,24 @@ def _clean_labels_ar(X, labels):
     return labels
 
 def _buildAB(lap_sparse, labels):
+    """
+        Build the matrix A and rhs B of the linear system to solve
+    """
     l_x, l_y, l_z = labels.shape
     labels = labels[labels >= 0]
     indices = np.arange(labels.size) 
     unlabeled_indices = indices[labels == 0]
     seeds_indices = indices[labels > 0]
+    # The following two lines take most of the time
     B = lap_sparse[unlabeled_indices][:, seeds_indices]
     lap_sparse = lap_sparse[unlabeled_indices][:, unlabeled_indices]
     nlabels = labels.max()
     rhs = []
     for lab in range(1, nlabels+1):
-        fs = sparse.csr_matrix((labels[seeds_indices] == lab)\
-                                                [:, np.newaxis])
-        rhs.append(B.tocsr()* fs)
+        mask = (labels[seeds_indices] == lab)
+        fs = sparse.csr_matrix(mask)
+        fs = fs.transpose()
+        rhs.append(B * fs)
     return lap_sparse, rhs
     
 def _trim_edges_weights(edges, weights, mask):
@@ -118,7 +123,6 @@ def _trim_edges_weights(edges, weights, mask):
     order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
     edges = order[edges]
     return edges, weights
-
 
 def _build_laplacian(data, mask=None, beta=50):
     l_x, l_y, l_z = data.shape
@@ -258,6 +262,7 @@ def _solve_bf(lap_sparse, B):
     return X
 
 def _solve_cg(lap_sparse, B, tol):
+    lap_sparse = lap_sparse.tocsc()
     X = []
     for i in range(len(B)):
         x0 = cg(lap_sparse, -B[i].todense(), tol=tol)[0]
@@ -272,7 +277,7 @@ def _solve_cg_mg(lap_sparse, B, tol):
         must be installed to use the amg mode"""
         raise ImportError
     X = []
-    lap_sparse = lap_sparse.tocsr()
+    #lap_sparse = lap_sparse.tocsr()
     ml = ruge_stuben_solver(lap_sparse)
     M = ml.aspreconditioner(cycle='V')
     for i in range(len(B)):
