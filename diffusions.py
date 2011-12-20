@@ -1,11 +1,23 @@
 """
-diffusions: a module providing segmentation algorithm based on diffusion.
+Random walker algorithm
 
-The algorithms of this module are based on the "random walker" algorithm.
+from *Random walks for image segmentation*, Leo Grady, IEEE Trans 
+Pattern Anal Mach Intell. 2006 Nov;28(11):1768-83.
+
+Dependencies:
+
+* numpy >= 1.4, scipy
+
+* optional: pyamg, numexpr
+
+Installing pyamg and using the 'cg_mg' mode of random_walker improves
+significantly the performance.
+
+Installing numexpr makes only a slight improvement. 
 """
 
 # Author: Emmanuelle Gouillart <emmanuelle.gouillart@normalesup.org>
-# Copyright (c) 2009-2010, Emmanuelle Gouillart
+# Copyright (c) 2009-2011, Emmanuelle Gouillart
 # License: BSD
 
 import warnings
@@ -19,7 +31,7 @@ except:
     warnings.warn("""Scipy was built without UMFPACK. Consider rebuilding 
     Scipy with UMFPACK, this will greatly speed up the random walker 
     functions. You may also install pyamg and run the random walker function 
-    in amg mode (see the docstrings)
+    in cg_mg mode (see the docstrings)
     """)
 try:
     from pyamg import smoothed_aggregation_solver, solve, ruge_stuben_solver
@@ -28,7 +40,11 @@ except ImportError:
     amg_loaded = False 
 import scipy
 from scipy.sparse.linalg import cg
-
+try:
+    import numexpr as ne
+    numexpr_loaded = True
+except ImportError:
+    numexpr_loaded = False
 
 #-----------Laplacian--------------------
 
@@ -55,20 +71,22 @@ def _make_edges_3d(n_x, n_y, n_z):
 
 def _compute_weights_3d(edges, data, beta=130, eps=1.e-6):
     l_x, l_y, l_z = data.shape
-    gradients = _compute_gradients_3d(edges, data)**2
-    beta /= 10*data.std()
-    weights = np.exp(- beta*gradients) + eps
+    gradients = _compute_gradients_3d(data)**2
+    beta /= 10 * data.std()
+    gradients *= beta
+    if numexpr_loaded:
+        weights = ne.evaluate("exp(- gradients)") 
+    else:
+        weights = np.exp(- gradients)
+    weights += eps
     return weights
 
-def _compute_gradients_3d(edges, data):
+def _compute_gradients_3d(data):
     l_x, l_y, l_z = data.shape
-    gradients = np.abs(data[edges[0] / (l_y * l_z), 
-                                 (edges[0] % (l_y * l_z)) / l_z, 
-                                 (edges[0] % (l_y * l_z)) % l_z] - 
-                       data[edges[1] / (l_y * l_z), \
-                                 (edges[1] % (l_y * l_z)) / l_z, \
-                                 (edges[1] % (l_y * l_z)) % l_z])
-    return gradients
+    gr_deep = np.abs(data[:, :, :-1] - data[:, :, 1:]).ravel()
+    gr_right = np.abs(data[:, :-1] - data[:, 1:]).ravel()
+    gr_down = np.abs(data[:-1] - data[1:]).ravel()
+    return np.r_[gr_deep, gr_right, gr_down]
 
 def _make_laplacian_sparse(edges, weights):
     """
