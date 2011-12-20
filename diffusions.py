@@ -134,7 +134,7 @@ def _build_laplacian(data, mask=None, beta=50):
 
 #----------- Random walker algorithms (with markers or with prior) -------------
 
-def random_walker(data, labels, beta=130, mode='bf', tol=1.e-3, copy=True):
+def random_walker(data, labels, beta=130, mode='cg_mg', tol=1.e-3, copy=True):
     """
         Segmentation with random walker algorithm by Leo Grady, 
         given some data and an array of labels (the more labeled 
@@ -156,14 +156,27 @@ def random_walker(data, labels, beta=130, mode='bf', tol=1.e-3, copy=True):
             Penalization coefficient for the random walker motion
             (the greater `beta`, the more difficult the diffusion).
 
-        mode : {'bf', 'amg'}
+        mode : {'bf', 'cg_mg', 'cg'}
             Mode for solving the linear system in the random walker 
-            algorithm. `mode` can be either 'bf' (for brute force),
-            in which case matrices are directly inverted, or 'amg'
-            (for algebraic multigrid solver), in which case a multigrid
-            approach is used. The 'amg' mode uses the pyamg module 
-            (http://code.google.com/p/pyamg/), which must be installed
-            to use this mode.
+            algorithm. 
+
+            - 'bf' (brute force): an LU factorization of the Laplacian
+            is computed. This is fast for small images (<256x256), but
+            very slow (due to the memory cost) and memory-consuming for
+            big images.
+
+            - 'cg' (conjugate gradient): the linear system is solved
+            iteratively using the Conjugate Gradient method from
+            scipy.sparse.linalg. This is less memory-consuming than the
+            brute force method for large images, but it is quite slow.
+
+            - 'cg_mg' (conjugate gradient with multigrid preconditioner):
+            a preconditioner is computed using a multigrid solver, then 
+            the solution is computed with the Conjugate Gradient method. 
+            This mode requires that the pyamg module 
+            (http://code.google.com/p/pyamg/) is installed.
+
+        tol : tolerance to achieve when solving the linear system
 
         copy : bool
             If copy is False, the `labels` array will be overwritten with
@@ -232,8 +245,6 @@ def random_walker(data, labels, beta=130, mode='bf', tol=1.e-3, copy=True):
         X = _solve_cg_mg(lap_sparse, B, tol=tol)
     if mode == 'bf':
         X = _solve_bf(lap_sparse, B)
-    elif mode == 'amg':
-        X = _solve_amg(lap_sparse, B, tol=tol)
     X = _clean_labels_ar(X + 1, labels)
     data = np.squeeze(data)
     return X.reshape(data.shape)
@@ -246,26 +257,6 @@ def _solve_bf(lap_sparse, B):
     X = np.argmax(X, axis=0)
     return X
 
-def _solve_amg(lap_sparse, B, tol):    
-    if not amg_loaded:
-        print """the pyamg module (http://code.google.com/p/pyamg/)
-        must be installed to use the amg mode"""
-        raise ImportError
-    lap_sparse = lap_sparse.tocsr()
-    le = lap_sparse.shape[0]
-    mls = smoothed_aggregation_solver(lap_sparse)
-    del lap_sparse
-    ll = np.zeros(le, dtype=np.int32)
-    proba_max = np.zeros(le, dtype=np.float32)
-    for i, Bi in enumerate(B):
-        x = mls.solve(np.ravel(-Bi.todense()).astype(np.float32))
-        mask = x > proba_max
-        ll[mask] = i
-        proba_max[mask] = (x[mask]).astype(np.float32)
-        del mask
-    del proba_max
-    return ll
-
 def _solve_cg(lap_sparse, B, tol):
     X = []
     for i in range(len(B)):
@@ -276,6 +267,10 @@ def _solve_cg(lap_sparse, B, tol):
     return X
 
 def _solve_cg_mg(lap_sparse, B, tol):
+    if not amg_loaded:
+        print """the pyamg module (http://code.google.com/p/pyamg/)
+        must be installed to use the amg mode"""
+        raise ImportError
     X = []
     lap_sparse = lap_sparse.tocsr()
     ml = ruge_stuben_solver(lap_sparse)

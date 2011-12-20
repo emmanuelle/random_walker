@@ -1,5 +1,5 @@
 import numpy as np
-from diffusions import random_walker, random_walker_prior, fiedler_vector
+from diffusions import random_walker, random_walker_prior
 try:
     from pyamg import smoothed_aggregation_solver
     amg_loaded = True
@@ -21,6 +21,22 @@ def make_2d_syntheticdata(lx, ly=None):
     seeds[lx/5, ly/5] = 1
     seeds[lx/2 + small_l/4, ly/2 - small_l/4] = 2
     return data, seeds
+
+def make_2d_syntheticdata_more_seeds(lx, ly=None):
+    if ly is None:
+        ly = lx
+    data = np.zeros((lx, ly)) + 0.1*np.random.randn(lx, ly)
+    small_l = int(lx / 5)
+    data[lx/2 - small_l:lx/2+small_l, ly/2-small_l:ly/2+small_l] = 1
+    data[lx/2 - small_l+1:lx/2+small_l-1, \
+         ly/2-small_l+1:ly/2+small_l-1] = \
+                        0.1 * np.random.randn(2*small_l-2, 2*small_l-2)
+    data[lx/2-small_l, ly/2-small_l/8:ly/2+small_l/8] = 0
+    seeds = np.zeros_like(data)
+    seeds[lx/10:-lx/10, ly/5] = 1
+    seeds[lx/2 + small_l/4, ly/2 - small_l/2:ly/2 + small_l/2] = 2
+    return data, seeds
+
 
 def make_3d_syntheticdata(lx, ly=None, lz=None):
     if ly is None:
@@ -50,23 +66,33 @@ def test_2d():
     lx = 70
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
-    print "making"
     labels_bf = random_walker(data, labels, beta=90)
+    assert (labels_bf[25:45, 40:60] == 2).all()
+    return data, labels_bf
+
+def test_2d_cg():
+    lx = 70
+    ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
-    assert (labels_bf.reshape((lx, ly))[25:45, 40:60] == 2).all()
-    if amg_loaded:
-        labels_amg = random_walker(data, labels, beta=90, mode='amg')
-        assert (labels_amg.reshape((lx, ly))[25:45, 40:60] == 2).all()
-        return data, labels_bf, labels_amg
-    else:
-        return data, labels_bf
+    labels_cg = random_walker(data, labels, beta=90, mode='cg')
+    assert (labels_cg[25:45, 40:60] == 2).all()
+    return data, labels_cg
+
+
+def test_2d_cg():
+    lx = 70
+    ly = 100
+    data, labels = make_2d_syntheticdata(lx, ly)
+    labels_cg = random_walker(data, labels, beta=90, mode='cg_mg')
+    assert (labels_cg[25:45, 40:60] == 2).all()
+    return data, labels_cg
+
 
 def test_2d_inactive():
     lx = 70
     ly = 100
     data, labels = make_2d_syntheticdata(lx, ly)
     labels[10:20, 10:20] = -1
-    print "making"
     labels[46:50, 33:38] = -2
     labels = random_walker(data, labels, beta=90)
     assert (labels.reshape((lx, ly))[25:45, 40:60] == 2).all()
@@ -91,19 +117,6 @@ def test_3d_inactive():
     assert (labels.reshape(data.shape)[13:17,13:17,13:17] == 2).all()
     return data, labels, old_labels, after_labels
 
-def test_fiedler():
-    x, y = np.indices((40, 40))
-    x1, y1, x2, y2 = 14, 14, 28, 26
-    r1, r2 = 10, 10
-    mask_circle1 = (x - x1)**2 + (y - y1)**2 < r1**2
-    mask_circle2 = (x - x2)**2 + (y - y2)**2 < r2**2
-    image = np.logical_or(mask_circle1, mask_circle2)
-    v = fiedler_vector(image, image)
-    vm = v[image]
-    # Test that the image is separated in two regions
-    # that have almost the same area
-    assert np.abs((vm>0).sum() - (vm<0).sum()) <= 2
-    return image, v
 
 def test_rw_with_prior():
     a = np.zeros((40, 40))
