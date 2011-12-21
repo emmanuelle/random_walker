@@ -1,5 +1,5 @@
 import numpy as np
-from diffusions import random_walker, random_walker_prior
+from random_walker import random_walker, random_walker_prior
 try:
     from pyamg import smoothed_aggregation_solver
     amg_loaded = True

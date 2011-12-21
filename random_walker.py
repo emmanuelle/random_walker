@@ -34,7 +34,7 @@ except:
     in cg_mg mode (see the docstrings)
     """)
 try:
-    from pyamg import smoothed_aggregation_solver, solve, ruge_stuben_solver
+    from pyamg import smoothed_aggregation_solver, ruge_stuben_solver
     amg_loaded = True
 except ImportError:
     amg_loaded = False 

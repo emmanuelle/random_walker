@@ -1,11 +1,10 @@
-from diffusions import random_walker
+from random_walker import random_walker
 import numpy as np
 import matplotlib.pyplot as plt
 try:
     import pyamg
     amg_loaded = True
 except ImportError:
-    print('please consider to install pyamg for better performance')
     amg_loaded = False
 import time
 
@@ -25,7 +24,7 @@ if amg_loaded:
     t1 = time.time()
     labels = random_walker(data, markers, mode='cg_mg', beta=50, tol=5.e-3)
     t2 = time.time()
-    print(t2 - t1)
+    print t2 - t1
 else:
     labels = random_walker(data[:10], markers[:10], mode='cg', beta=100) 
 
