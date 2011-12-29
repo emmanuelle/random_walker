@@ -99,7 +99,7 @@ def _make_laplacian_sparse(edges, weights):
     data = np.hstack((-weights, -weights))
     lap = sparse.coo_matrix((data, (i_indices, j_indices)), 
                             shape=(pixel_nb, pixel_nb))
-    connect = - np.ravel(lap.sum(axis=1)) 
+    connect = - np.ravel(lap.sum(axis=1))
     lap = sparse.coo_matrix((np.hstack((data, connect)),
                 (np.hstack((i_indices,diag)), np.hstack((j_indices, diag)))), 
                 shape=(pixel_nb, pixel_nb))
@@ -130,12 +130,14 @@ def _buildAB(lap_sparse, labels):
         fs = fs.transpose()
         rhs.append(B * fs)
     return lap_sparse, rhs
-    
+
 def _trim_edges_weights(edges, weights, mask):
-    inds = np.arange(mask.size)
-    inds = inds[mask.ravel()]
-    ind_mask = np.logical_and(np.in1d(edges[0], inds),
-                          np.in1d(edges[1], inds))
+    mask0 = np.hstack((mask[:, :, :-1].ravel(), mask[:, :-1].ravel(), 
+                        mask[:-1].ravel()))
+    mask1 = np.hstack((mask[:, :, 1:].ravel(), mask[:, 1:].ravel(),
+                            mask[1:].ravel()))
+    
+    ind_mask = np.logical_and(mask0, mask1)
     edges, weights = edges[:, ind_mask], weights[ind_mask]
     maxval = edges.max()
     order = np.searchsorted(np.unique(edges.ravel()), np.arange(maxval+1))
