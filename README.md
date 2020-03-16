@@ -1,11 +1,9 @@
-Random walker algorithm
-=======================
+# Random walker algorithm
 
 from *Random walks for image segmentation*, Leo Grady, IEEE Trans 
 Pattern Anal Mach Intell. 2006 Nov;28(11):1768-83.
 
-Dependencies
-------------
+## Dependencies
 
 * numpy >= 1.4, scipy
 
@@ -16,12 +14,10 @@ significantly the performance.
 
 Installing numexpr makes only a slight improvement. 
 
-Installing
-----------
+## Installing
 
 sudo python setup.py install
 
-Testing
--------
+## Testing
 
 nosetests test_random_walker.py
